@@ -1172,8 +1172,8 @@ set(pcsx2LinuxSources
 	)
 
 set(pcsx2OSXSources
-	CDVD/Linux/DriveUtility.cpp
-	CDVD/Linux/IOCtlSrc.cpp
+	CDVD/macOS/DriveUtility.cpp
+	CDVD/macOS/IOCtlSrc.cpp
 	Darwin/DarwinFlatFileReader.cpp
 	)
 
