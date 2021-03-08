@@ -1443,6 +1443,9 @@
     <ClCompile Include="SIO\Pad\PadNegcon.cpp">
       <Filter>System\Ps2\Iop\SIO\PAD</Filter>
     </ClCompile>
+    <ClCompile Include="des.cpp">
+      <Filter>System\Ps2\Iop</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Patch.h">
@@ -2398,6 +2401,9 @@
     </ClInclude>
     <ClInclude Include="SIO\Pad\PadNegcon.h">
       <Filter>System\Ps2\Iop\SIO\PAD</Filter>
+    </ClInclude>
+    <ClInclude Include="des.h">
+      <Filter>System\Ps2\Iop</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

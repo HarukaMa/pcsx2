@@ -49,6 +49,7 @@ public:
 	void AuthXor();
 	void AuthF3();
 	void AuthF7();
+	void Crypt();
 };
 
 extern MemoryCardProtocol g_MemoryCardProtocol;
