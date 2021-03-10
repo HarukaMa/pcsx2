@@ -48,7 +48,7 @@ public:
 	void UnknownBoot();
 	void AuthXor();
 	void AuthF3();
-	void AuthF7();
+	void AuthKeySelect();
 	void Crypt();
 };
 
