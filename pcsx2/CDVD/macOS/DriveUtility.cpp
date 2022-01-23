@@ -37,11 +37,11 @@ std::vector<std::string> GetDriveListFromClasses(CFMutableDictionaryRef classes)
 	while (media)
 	{
 		CFTypeRef path_cfstr = IORegistryEntryCreateCFProperty(media, CFSTR(kIOBSDNameKey), kCFAllocatorDefault, 0);
-		char path[PATH_MAX] = {0};
 		if (path_cfstr)
 		{
+			char path[PATH_MAX] = {0};
 			strlcpy(path, "/dev/r", PATH_MAX);
-			size_t path_prefix_len = strlen(path);
+			size_t path_prefix_len = strnlen(path, PATH_MAX);
 			result = CFStringGetCString((CFStringRef)path_cfstr, path + path_prefix_len, PATH_MAX - path_prefix_len, kCFStringEncodingUTF8);
 			if (result)
 			{
