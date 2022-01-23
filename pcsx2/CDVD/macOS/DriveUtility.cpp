@@ -28,21 +28,20 @@
 std::vector<std::string> GetDriveListFromClasses(CFMutableDictionaryRef classes)
 {
 	io_iterator_t iterator = IO_OBJECT_NULL;
-	kern_return_t result;
 	std::vector<std::string> drives;
 
 	CFDictionarySetValue(classes, CFSTR(kIOMediaEjectableKey), kCFBooleanTrue);
-	result = IOServiceGetMatchingServices(kIOMasterPortDefault, classes, &iterator);
+	IOServiceGetMatchingServices(kIOMasterPortDefault, classes, &iterator);
 	io_object_t media = IOIteratorNext(iterator);
 	while (media)
 	{
 		CFTypeRef path_cfstr = IORegistryEntryCreateCFProperty(media, CFSTR(kIOBSDNameKey), kCFAllocatorDefault, 0);
-		char path[PATH_MAX] = {0};
 		if (path_cfstr)
 		{
+			char path[PATH_MAX] = {0};
 			strlcpy(path, "/dev/r", PATH_MAX);
-			size_t path_prefix_len = strlen(path);
-			result = CFStringGetCString((CFStringRef)path_cfstr, path + path_prefix_len, PATH_MAX - path_prefix_len, kCFStringEncodingUTF8);
+			size_t path_prefix_len = strnlen(path, PATH_MAX);
+			bool result = CFStringGetCString((CFStringRef)path_cfstr, path + path_prefix_len, PATH_MAX - path_prefix_len, kCFStringEncodingUTF8);
 			if (result)
 			{
 				drives.push_back(std::string(path));
