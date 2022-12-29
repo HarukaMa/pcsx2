@@ -110,10 +110,10 @@ uint16_t g_MemoryCardKeyIndexes[72] = {
 uint16_t g_KelfKeysIndex[4] = { 0x110, 0x110, 0xC4, 0x15C };
 
 uint16_t g_cardKeyStore[48] = {
-	/* SHA256: 04bcc6b13827829fb5cc8dbd86420d30f69a2bfd3b7719398b341e15368bd365 */
+	/* SHA256: fef2015096181409b25fb4c4cd0e0fc48ca73c6ea845c0ed785c06bf9becd84e */
 };
 
-uint8_t g_KeyStoreKey[16] = { /* SHA256: 04bcc6b13827829fb5cc8dbd86420d30f69a2bfd3b7719398b341e15368bd365 */ };
+uint8_t g_KeyStoreKey[16] = { /* SHA256: f7c9233b37a7662a882eca096f43b35af74b3de6030c1ad5185692332e96aecb */ };
 
 uint8_t MG_IV_NULL[8] = { 0 };
 
@@ -3361,169 +3361,169 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				break;
 
 			case 0x80:                // secrman: __mechacon_auth_0x80
-				SetResultSize(1);     //in:1
-				cdvd.Result[0] = 0x80;
+				SetSCMDResultSize(1);     //in:1
+				cdvd.SCMDResult[0] = 0x80;
 				if (cdvd.mecha_state)
 				{
-					if (cdvd.ParamC == 1)
+					if (cdvd.SCMDParamC == 1)
 					{
 						cdvd.mecha_state = MECHA_STATE_READY;
-						if (cdvd.Param[0] < 0x10)
-							cdvd.Result[0] = 0;
+						if (cdvd.SCMDParam[0] < 0x10)
+							cdvd.SCMDResult[0] = 0;
 					}
 				}
 				break;
 
 			case 0x81:                // secrman: __mechacon_auth_0x81
-				SetResultSize(1);     //in:1
-				cdvd.Result[0] = 0x80;
+				SetSCMDResultSize(1);     //in:1
+				cdvd.SCMDResult[0] = 0x80;
 				if (cdvd.mecha_state)
 				{
-					if (cdvd.ParamC == 1)
+					if (cdvd.SCMDParamC == 1)
 					{
 						cdvd.mecha_state = MECHA_STATE_READY;
-						uint8_t cardKeySlot = cdvd.Param[0] & 0x3F;
-						uint8_t cardKeyIndex = (cdvd.Param[0] >> 6) & 3;
+						uint8_t cardKeySlot = cdvd.SCMDParam[0] & 0x3F;
+						uint8_t cardKeyIndex = (cdvd.SCMDParam[0] >> 6) & 3;
 						if (cardKeySlot < 0x10 && cardKeyIndex != 3)
 						{
 							cdvd.cardKeySlot = cardKeySlot;
 							cdvd.cardKeyIndex = cardKeyIndex;
 							cdvd.mecha_state = MECHA_STATE_KEY_INDEXES_SET;
-							cdvd.Result[0] = 0;
+							cdvd.SCMDResult[0] = 0;
 						}
 					}
 				}
 				break;
 
 			case 0x82:            // secrman: __mechacon_auth_0x82
-				SetResultSize(1); //in:16
-				if (cdvd.mecha_state == MECHA_STATE_KEY_INDEXES_SET && cdvd.ParamC == 16)
+				SetSCMDResultSize(1); //in:16
+				if (cdvd.mecha_state == MECHA_STATE_KEY_INDEXES_SET && cdvd.SCMDParamC == 16)
 				{
-					memcpy(cdvd.memcard_iv, cdvd.Param, 8);
-					memcpy(cdvd.memcard_seed, &cdvd.Param[8], 8);
+					memcpy(cdvd.memcard_iv, cdvd.SCMDParam, 8);
+					memcpy(cdvd.memcard_seed, &cdvd.SCMDParam[8], 8);
 					cdvd.mecha_state = MECHA_STATE_CARD_IV_SEED_SET;
-					cdvd.Result[0] = 0;
+					cdvd.SCMDResult[0] = 0;
 				}
 				else
 				{
 					cdvd.mecha_state = MECHA_STATE_READY;
-					cdvd.Result[0] = 0x80;
+					cdvd.SCMDResult[0] = 0x80;
 				}
 				break;
 
 			case 0x83:            // secrman: __mechacon_auth_0x83
-				SetResultSize(1); //in:8
-				if (cdvd.mecha_state == MECHA_STATE_CARD_IV_SEED_SET && cdvd.ParamC == 8)
+				SetSCMDResultSize(1); //in:8
+				if (cdvd.mecha_state == MECHA_STATE_CARD_IV_SEED_SET && cdvd.SCMDParamC == 8)
 				{
-					memcpy(cdvd.memcard_nonce, cdvd.Param, 8);
+					memcpy(cdvd.memcard_nonce, cdvd.SCMDParam, 8);
 					cdvd.mecha_state = MECHA_STATE_CARD_NONCE_SET;
 					executeMechaHandler();
-					cdvd.Result[0] = 0;
+					cdvd.SCMDResult[0] = 0;
 				}
 				else
 				{
 					cdvd.mecha_state = MECHA_STATE_READY;
-					cdvd.Result[0] = 0x80;
+					cdvd.SCMDResult[0] = 0x80;
 				}
 				break;
 
 			case 0x84:                    // secrman: __mechacon_auth_0x84
-				if (cdvd.mecha_state == MECHA_STATE_CARD_CHALLANGE_GENERATED && cdvd.ParamC == 0)
+				if (cdvd.mecha_state == MECHA_STATE_CARD_CHALLANGE_GENERATED && cdvd.SCMDParamC == 0)
 				{
-					SetResultSize(1 + 8 + 4);
-					cdvd.Result[0] = 0;
-					memcpy(&cdvd.Result[1], cdvd.memcard_challenge1, 8);
-					memcpy(&cdvd.Result[9], cdvd.memcard_challenge2, 4);
+					SetSCMDResultSize(1 + 8 + 4);
+					cdvd.SCMDResult[0] = 0;
+					memcpy(&cdvd.SCMDResult[1], cdvd.memcard_challenge1, 8);
+					memcpy(&cdvd.SCMDResult[9], cdvd.memcard_challenge2, 4);
 					cdvd.mecha_state = MECHA_STATE_CARD_CHALLENGE12_SENT;
 				}
 				else
 				{
-					SetResultSize(1);
-					cdvd.Result[0] = 0x80;
+					SetSCMDResultSize(1);
+					cdvd.SCMDResult[0] = 0x80;
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
 
 			case 0x85:                    // secrman: __mechacon_auth_0x85
-				if (cdvd.mecha_state == MECHA_STATE_CARD_CHALLENGE12_SENT && cdvd.ParamC == 0)
+				if (cdvd.mecha_state == MECHA_STATE_CARD_CHALLENGE12_SENT && cdvd.SCMDParamC == 0)
 				{
-					SetResultSize(1 + 4 + 8);
-					cdvd.Result[0] = 0;
-					memcpy(&cdvd.Result[1], &cdvd.memcard_challenge2[4], 4);
-					memcpy(&cdvd.Result[5], cdvd.memcard_challenge3, 8);
+					SetSCMDResultSize(1 + 4 + 8);
+					cdvd.SCMDResult[0] = 0;
+					memcpy(&cdvd.SCMDResult[1], &cdvd.memcard_challenge2[4], 4);
+					memcpy(&cdvd.SCMDResult[5], cdvd.memcard_challenge3, 8);
 					cdvd.mecha_state = MECHA_STATE_CARD_CHALLENGE23_SENT;
 				}
 				else
 				{
-					SetResultSize(1);
-					cdvd.Result[0] = 0x80;
+					SetSCMDResultSize(1);
+					cdvd.SCMDResult[0] = 0x80;
 				}
 				break;
 
 			case 0x86:            // secrman: __mechacon_auth_0x86
-				SetResultSize(1); //in:16
-				if (cdvd.mecha_state == MECHA_STATE_CARD_CHALLENGE23_SENT && cdvd.ParamC == 16)
+				SetSCMDResultSize(1); //in:16
+				if (cdvd.mecha_state == MECHA_STATE_CARD_CHALLENGE23_SENT && cdvd.SCMDParamC == 16)
 				{
-					memcpy(cdvd.memcard_reponse1, cdvd.Param, 8);
-					memcpy(cdvd.memcard_reponse2, &cdvd.Param[8], 8);
+					memcpy(cdvd.memcard_reponse1, cdvd.SCMDParam, 8);
+					memcpy(cdvd.memcard_reponse2, &cdvd.SCMDParam[8], 8);
 					cdvd.mecha_state = MECHA_STATE_CARD_RESPONSE12_RECEIVED;
-					cdvd.Result[0] = 0;
+					cdvd.SCMDResult[0] = 0;
 				}
 				else
 				{
-					cdvd.Result[0] = 0x80;
+					cdvd.SCMDResult[0] = 0x80;
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
 
 			case 0x87:            // secrman: __mechacon_auth_0x87
-				SetResultSize(1); //in:8
-				if (cdvd.mecha_state == MECHA_STATE_CARD_RESPONSE12_RECEIVED && cdvd.ParamC == 8)
+				SetSCMDResultSize(1); //in:8
+				if (cdvd.mecha_state == MECHA_STATE_CARD_RESPONSE12_RECEIVED && cdvd.SCMDParamC == 8)
 				{
-					memcpy(cdvd.memcard_reponse3, cdvd.Param, 8);
+					memcpy(cdvd.memcard_reponse3, cdvd.SCMDParam, 8);
 					cdvd.mecha_state = MECHA_STATE_CARD_RESPONSE3_RECEIVED;
 					executeMechaHandler();
-					cdvd.Result[0] = 0;
+					cdvd.SCMDResult[0] = 0;
 				}
 				else
 				{
 					cdvd.mecha_state = MECHA_STATE_READY;
-					cdvd.Result[0] = 0x80;
+					cdvd.SCMDResult[0] = 0x80;
 				}
 				break;
 
 			case 0x88:                     // secrman: __mechacon_auth_0x88
-				SetResultSize(1); //in:0
-				if (cdvd.mecha_state == MECHA_STATE_CARD_VERIFIED && cdvd.ParamC == 0)
+				SetSCMDResultSize(1); //in:0
+				if (cdvd.mecha_state == MECHA_STATE_CARD_VERIFIED && cdvd.SCMDParamC == 0)
 				{
-					cdvd.Result[0] = 0;
+					cdvd.SCMDResult[0] = 0;
 				}
 				else
 				{
-					cdvd.Result[0] = 0x80;
+					cdvd.SCMDResult[0] = 0x80;
 				}
 				break;
 
 			case 0x8C:
-				SetResultSize(1); //in:0
+				SetSCMDResultSize(1); //in:0
 				executeMechaHandler();
 				cdvd.mecha_result = MECHA_RESULT_0;
 				cdvd.mecha_state = MECHA_STATE_READY;
-				cdvd.Result[0] = 0;
+				cdvd.SCMDResult[0] = 0;
 				break;
 
 			case 0x8D:            // sceMgWriteData
-				SetResultSize(1);
-				cdvd.Result[0] = 0x80;
+				SetSCMDResultSize(1);
+				cdvd.SCMDResult[0] = 0x80;
 
-				if (cdvd.ParamC &&
+				if (cdvd.SCMDParamC &&
 					(cdvd.mecha_state == MECHA_STATE_KELF_HEADER_PARAMS_SET ||
 					cdvd.mecha_state == MECHA_STATE_DATA_IN_LENGTH_SET ||
 					cdvd.mecha_state == MECHA_STATE_CRYPTO_DATA_IN_SIZE_SET) &&
-					cdvd.data_buffer_offset + cdvd.ParamC <= 0x800)
+					cdvd.data_buffer_offset + cdvd.SCMDParamC <= 0x800)
 				{
-					memcpy(&cdvd.data_buffer[cdvd.data_buffer_offset], cdvd.Param, cdvd.ParamC);
-					cdvd.data_buffer_offset += cdvd.ParamC;
+					memcpy(&cdvd.data_buffer[cdvd.data_buffer_offset], cdvd.SCMDParam, cdvd.SCMDParamC);
+					cdvd.data_buffer_offset += cdvd.SCMDParamC;
 					switch (cdvd.mecha_state)
 					{
 						case MECHA_STATE_KELF_HEADER_PARAMS_SET:
@@ -3548,13 +3548,13 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 							}
 						break;
 					}
-					cdvd.Result[0] = 0;
+					cdvd.SCMDResult[0] = 0;
 				}
 				break;
 
 			case 0x8E: // sceMgReadData
-				SetResultSize(1);
-				if (cdvd.ParamC == 0 &&
+				SetSCMDResultSize(1);
+				if (cdvd.SCMDParamC == 0 &&
 					(cdvd.mecha_state == MECHA_STATE_BIT_LENGTH_SENT ||
 					cdvd.mecha_state == MECHA_STATE_DATA_OUT_LENGTH_SET ||
 					cdvd.mecha_state == MECHA_STATE_CRYPTO_DATA_OUT_SIZE_SET))
@@ -3562,10 +3562,10 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 					uint16_t len = cdvd.DataSize - cdvd.data_out_offset;
 					if (len > 0x10)
 						len = 0x10;
-					SetResultSize(len);
+					SetSCMDResultSize(len);
 					for (int i = 0; i < len; i++)
 					{
-						cdvd.Result[i] = *cdvd.data_out_ptr++;
+						cdvd.SCMDResult[i] = *cdvd.data_out_ptr++;
 					}
 					cdvd.data_out_offset += len;
 
@@ -3590,15 +3590,15 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				}
 				else
 				{
-					SetResultSize(0);
+					SetSCMDResultSize(0);
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
 
 			case 0x8F:                     // secrman: __mechacon_auth_0x8F
-				SetResultSize(1);          //in:0
-				cdvd.Result[0] = 0x80;
-				if (cdvd.ParamC)
+				SetSCMDResultSize(1);          //in:0
+				cdvd.SCMDResult[0] = 0x80;
+				if (cdvd.SCMDParamC)
 					break;
 				switch (cdvd.mecha_state)
 				{
@@ -3607,7 +3607,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 						if (cdvd.mecha_result == MECHA_RESULT_CARD_CHALLANGE_GENERATED)
 						{
 							cdvd.mecha_state = MECHA_STATE_CARD_CHALLANGE_GENERATED;
-							cdvd.Result[0] = 0;
+							cdvd.SCMDResult[0] = 0;
 						}
 						break;
 					case MECHA_STATE_CARD_RESPONSE3_RECEIVED:
@@ -3615,7 +3615,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 						if (cdvd.mecha_result == MECHA_RESULT_CARD_VERIFIED)
 						{
 							cdvd.mecha_state = MECHA_STATE_CARD_VERIFIED;
-							cdvd.Result[0] = 0;
+							cdvd.SCMDResult[0] = 0;
 						}
 						break;
 					case MECHA_STATE_KELF_HEADER_RECEIVED:
@@ -3623,12 +3623,12 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 						if (cdvd.mecha_result == MECHA_RESULT_KELF_HEADER_VERIFED)
 						{
 							cdvd.mecha_state = MECHA_STATE_KELF_HEADER_VERIFED;
-							cdvd.Result[0] = 0;
+							cdvd.SCMDResult[0] = 0;
 						}
 						else if (cdvd.mecha_result == MECHA_RESULT_FAILED)
 						{
 							cdvd.mecha_state = MECHA_STATE_READY;
-							cdvd.Result[0] = cdvd.mecha_errorcode;
+							cdvd.SCMDResult[0] = cdvd.mecha_errorcode;
 						}
 						break;
 
@@ -3648,26 +3648,26 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 							{
 								cdvd.mecha_state = MECHA_STATE_UNK17;
 							}
-							cdvd.Result[0] = 0;
+							cdvd.SCMDResult[0] = 0;
 						}
 						else if (cdvd.mecha_result == MECHA_RESULT_FAILED)
 						{
 							cdvd.mecha_state = MECHA_STATE_READY;
-							cdvd.Result[0] = cdvd.mecha_errorcode;
+							cdvd.SCMDResult[0] = cdvd.mecha_errorcode;
 						}
 						break;
 				}
 				break;
 
 			case 0x90:            // sceMgWriteHeaderStart
-				SetResultSize(1); //in:5
-				cdvd.Result[0] = 0x80;
-				if (cdvd.mecha_state && cdvd.ParamC == 5)
+				SetSCMDResultSize(1); //in:5
+				cdvd.SCMDResult[0] = 0x80;
+				if (cdvd.mecha_state && cdvd.SCMDParamC == 5)
 				{
-					cdvd.mode = cdvd.Param[0];
-					cdvd.DataSize = *(uint16_t *)&cdvd.Param[1];
-					cdvd.cardKeySlot = cdvd.Param[3];
-					cdvd.mode3KeyIndex = cdvd.Param[4];
+					cdvd.mode = cdvd.SCMDParam[0];
+					cdvd.DataSize = *(uint16_t *)&cdvd.SCMDParam[1];
+					cdvd.cardKeySlot = cdvd.SCMDParam[3];
+					cdvd.mode3KeyIndex = cdvd.SCMDParam[4];
 					cdvd.data_buffer_offset = 0;
 					cdvd.mecha_state = MECHA_STATE_READY;
 
@@ -3676,7 +3676,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 						if (cdvd.mode == 0 || (cdvd.cardKeySlot <= 0x10 && ((cdvd.mode == 1 || cdvd.mode == 2) || cdvd.mode3KeyIndex < 0x10)))
 						{
 							cdvd.mecha_state = MECHA_STATE_KELF_HEADER_PARAMS_SET;
-							cdvd.Result[0] = 0;
+							cdvd.SCMDResult[0] = 0;
 						}
 					}
 				}
@@ -3688,11 +3688,11 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
 			case 0x91: // sceMgReadBITLength
 			{
-				if (cdvd.mecha_state == MECHA_STATE_KELF_HEADER_VERIFED && cdvd.ParamC == 0)
+				if (cdvd.mecha_state == MECHA_STATE_KELF_HEADER_VERIFED && cdvd.SCMDParamC == 0)
 				{
-					SetResultSize(3); //in:0
-					cdvd.Result[0] = 0;
-					*(uint16_t *) &cdvd.Result[1] = cdvd.bit_length;
+					SetSCMDResultSize(3); //in:0
+					cdvd.SCMDResult[0] = 0;
+					*(uint16_t *) &cdvd.SCMDResult[1] = cdvd.bit_length;
 					cdvd.DataSize = cdvd.bit_length;
 					cdvd.data_out_offset = 0;
 					cdvd.data_out_ptr = (uint8_t *) cdvd.bitTablePtr;
@@ -3700,19 +3700,19 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				}
 				else
 				{
-					SetResultSize(1); //in:0
-					cdvd.Result[0] = 0x80;
+					SetSCMDResultSize(1); //in:0
+					cdvd.SCMDResult[0] = 0x80;
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
 			}
 
 			case 0x92:            // sceMgWriteDatainLength
-				SetResultSize(1); //in:2
-				cdvd.Result[0] = 0x80;
-				if (cdvd.mecha_state == MECHA_STATE_KELF_CONTENT_DECRYPT_IN_PROGRESS && cdvd.ParamC == 2)
+				SetSCMDResultSize(1); //in:2
+				cdvd.SCMDResult[0] = 0x80;
+				if (cdvd.mecha_state == MECHA_STATE_KELF_CONTENT_DECRYPT_IN_PROGRESS && cdvd.SCMDParamC == 2)
 				{
-					cdvd.DataSize = *(uint16_t *) cdvd.Param;
+					cdvd.DataSize = *(uint16_t *) cdvd.SCMDParam;
 					uint16_t len = cdvd.bitBlocks[cdvd.currentBlockIdx].Size - cdvd.DoneBlocks;
 					if (len > 0x800)
 						len = 0x800;
@@ -3720,7 +3720,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 					{
 						cdvd.data_buffer_offset = 0;
 						cdvd.mecha_state = MECHA_STATE_DATA_IN_LENGTH_SET;
-						cdvd.Result[0] = 0;
+						cdvd.SCMDResult[0] = 0;
 					}
 				}
 				else
@@ -3730,70 +3730,70 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				break;
 
 			case 0x93:            // sceMgWriteDataoutLength
-				SetResultSize(1); //in:2
-				cdvd.Result[0] = 0x80;
-				if (cdvd.mecha_state == MECHA_STATE_UNK17 && cdvd.ParamC == 2)
+				SetSCMDResultSize(1); //in:2
+				cdvd.SCMDResult[0] = 0x80;
+				if (cdvd.mecha_state == MECHA_STATE_UNK17 && cdvd.SCMDParamC == 2)
 				{
-					if (*(uint16_t *) cdvd.Param == cdvd.DataSize)
+					if (*(uint16_t *) cdvd.SCMDParam == cdvd.DataSize)
 					{
 						cdvd.data_out_offset = 0;
 						cdvd.data_out_ptr = cdvd.data_buffer;
 						cdvd.mecha_state = MECHA_STATE_DATA_OUT_LENGTH_SET;
-						cdvd.Result[0] = 0;
+						cdvd.SCMDResult[0] = 0;
 					}
 				}
 				break;
 
 			case 0x94:                // sceMgReadKbit - read first half of BIT key
-				if (cdvd.mecha_state == MECHA_STATE_KELF_CONTENT_DECRYPT_DONE && cdvd.ParamC == 0)
+				if (cdvd.mecha_state == MECHA_STATE_KELF_CONTENT_DECRYPT_DONE && cdvd.SCMDParamC == 0)
 				{
-					SetResultSize(1 + 8);
-					memcpy(&cdvd.Result[1], cdvd.pub_Kbit, 8);
+					SetSCMDResultSize(1 + 8);
+					memcpy(&cdvd.SCMDResult[1], cdvd.pub_Kbit, 8);
 					cdvd.mecha_state = MECHA_STATE_KBIT1_SENT;
 				}
 				else
 				{
-					SetResultSize(1);
-					cdvd.Result[0] = 0x80;
+					SetSCMDResultSize(1);
+					cdvd.SCMDResult[0] = 0x80;
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
 
 			case 0x95:                // sceMgReadKbit2 - read second half of BIT key
-				if (cdvd.mecha_state == MECHA_STATE_KBIT1_SENT && cdvd.ParamC == 0)
+				if (cdvd.mecha_state == MECHA_STATE_KBIT1_SENT && cdvd.SCMDParamC == 0)
 				{
-					SetResultSize(1 + 8);
-					memcpy(&cdvd.Result[1], &cdvd.pub_Kbit[8], 8);
+					SetSCMDResultSize(1 + 8);
+					memcpy(&cdvd.SCMDResult[1], &cdvd.pub_Kbit[8], 8);
 					cdvd.mecha_state = MECHA_STATE_KBIT2_SENT;
 				}
 				else
 				{
-					SetResultSize(1);
-					cdvd.Result[0] = 0x80;
+					SetSCMDResultSize(1);
+					cdvd.SCMDResult[0] = 0x80;
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
 
 			case 0x96:                // sceMgReadKcon - read first half of content key
-				if (cdvd.mecha_state == MECHA_STATE_KBIT2_SENT && cdvd.ParamC == 0)
+				if (cdvd.mecha_state == MECHA_STATE_KBIT2_SENT && cdvd.SCMDParamC == 0)
 				{
-					SetResultSize(1 + 8);
-					memcpy(&cdvd.Result[1], cdvd.pub_Kc, 8);
+					SetSCMDResultSize(1 + 8);
+					memcpy(&cdvd.SCMDResult[1], cdvd.pub_Kc, 8);
 					cdvd.mecha_state = MECHA_STATE_KC1_SENT;
 				}
 				else
 				{
-					SetResultSize(1);
-					cdvd.Result[0] = 0x80;
+					SetSCMDResultSize(1);
+					cdvd.SCMDResult[0] = 0x80;
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
 
 			case 0x97:                // sceMgReadKcon2 - read second half of content key
-				if (cdvd.mecha_state == MECHA_STATE_KC1_SENT && cdvd.ParamC == 0)
+				if (cdvd.mecha_state == MECHA_STATE_KC1_SENT && cdvd.SCMDParamC == 0)
 				{
-					SetResultSize(1 + 8);
-					memcpy(&cdvd.Result[1], &cdvd.pub_Kc[8], 8);
+					SetSCMDResultSize(1 + 8);
+					memcpy(&cdvd.SCMDResult[1], &cdvd.pub_Kc[8], 8);
 					if (cdvd.mode == 2 && cdvd.verifiedKelfHeader.Flags & 2)
 						cdvd.mecha_state = MECHA_STATE_KC2_SENT;
 					else
@@ -3801,23 +3801,23 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				}
 				else
 				{
-					SetResultSize(1);
-					cdvd.Result[0] = 0x80;
+					SetSCMDResultSize(1);
+					cdvd.SCMDResult[0] = 0x80;
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
 
 			case 0x98:                // sceMgReadKcon2 - read second half of content key
-				if (cdvd.mecha_state == MECHA_STATE_KC2_SENT && cdvd.ParamC == 0)
+				if (cdvd.mecha_state == MECHA_STATE_KC2_SENT && cdvd.SCMDParamC == 0)
 				{
-					SetResultSize(1 + 8);
-					memcpy(&cdvd.Result[1], cdvd.pub_icvps2, 8);
+					SetSCMDResultSize(1 + 8);
+					memcpy(&cdvd.SCMDResult[1], cdvd.pub_icvps2, 8);
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				else
 				{
-					SetResultSize(1);
-					cdvd.Result[0] = 0x80;
+					SetSCMDResultSize(1);
+					cdvd.SCMDResult[0] = 0x80;
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;

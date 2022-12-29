@@ -17,6 +17,7 @@
 
 #include "MemoryCardProtocol.h"
 #include "Sio.h"
+#include "des.h"
 
 #define MC_LOG_ENABLE 0
 #define MC_LOG if (MC_LOG_ENABLE) DevCon
@@ -136,7 +137,7 @@ void MemoryCardProtocol::GetSpecs()
 	McdSizeInfo info;
 	mcd->GetSizeInfo(info);
 	fifoOut.push_back(0x2b);
-	
+
 	const u8 sectorSizeLSB = (info.SectorSize & 0xff);
 	//checksum ^= sectorSizeLSB;
 	fifoOut.push_back(sectorSizeLSB);
@@ -168,7 +169,7 @@ void MemoryCardProtocol::GetSpecs()
 	const u8 sectorCountMSB = (info.McdSizeInSectors >> 24);
 	//checksum ^= sectorCountMSB;
 	fifoOut.push_back(sectorCountMSB);
-	
+
 	fifoOut.push_back(info.Xor);
 	fifoOut.push_back(mcd->term);
 }
@@ -416,6 +417,95 @@ void MemoryCardProtocol::UnknownBoot()
 	The2bTerminator(5);
 }
 
+// keysource and key are self generated values
+uint8_t keysource[] = {0xf5, 0x80, 0x95, 0x3c, 0x4c, 0x84, 0xa9, 0xc0};
+uint8_t dex_key[16] = { 0x17, 0x39, 0xd3, 0xbc, 0xd0, 0x2c, 0x18, 0x07, 0x4b, 0x17, 0xf0, 0xea, 0xc4, 0x66, 0x30, 0xf9 };
+uint8_t cex_key[16] = { 0x06, 0x46, 0x7a, 0x6c, 0x5b, 0x9b, 0x82, 0x77, 0x39, 0x0f, 0x78, 0xb7, 0xf2, 0xc6, 0xa5, 0x20 };
+uint8_t* key = dex_key;
+uint8_t iv[8];
+uint8_t seed[8];
+uint8_t nonce[8];
+uint8_t MechaChallenge1[8];
+uint8_t MechaChallenge2[8];
+uint8_t MechaChallenge3[8];
+uint8_t MechaResponse1[8];
+uint8_t MechaResponse2[8];
+uint8_t MechaResponse3[8];
+
+static void desEncrypt(void* key, void* data)
+{
+	DesContext dc;
+	desInit(&dc, (uint8_t*)key, 8);
+	desEncryptBlock(&dc, (uint8_t*)data, (uint8_t*)data);
+}
+
+static void desDecrypt(void* key, void* data)
+{
+	DesContext dc;
+	desInit(&dc, (uint8_t*)key, 8);
+	desDecryptBlock(&dc, (uint8_t*)data, (uint8_t*)data);
+}
+
+static void doubleDesEncrypt(void* key, void* data)
+{
+	desEncrypt(key, data);
+	desDecrypt(&((uint8_t*)key)[8], data);
+	desEncrypt(key, data);
+}
+
+static void doubleDesDecrypt(void* key, void* data)
+{
+	desDecrypt(key, data);
+	desEncrypt(&((uint8_t*)key)[8], data);
+	desDecrypt(key, data);
+}
+
+static void xor_bit(const void* a, const void* b, void* Result, size_t Length)
+{
+	size_t i;
+	for (i = 0; i < Length; i++)
+	{
+		((uint8_t*)Result)[i] = ((uint8_t*)a)[i] ^ ((uint8_t*)b)[i];
+	}
+}
+
+void generateIvSeedNonce()
+{
+	for (int i = 0; i < 8; i++)
+	{
+		iv[i] = rand();
+		seed[i] = keysource[i] ^ iv[i];
+		nonce[i] = rand();
+	}
+}
+
+void generateResponse()
+{
+	uint8_t ChallengeIV[8] = {/* SHA256: e7b02f4f8d99a58b96dbca4db81c5d666ea7c46fbf6e1d5c045eaba0ee25416a */};
+	FILE* f = fopen("civ.bin", "rb");
+	if (f)
+	{
+		fread(ChallengeIV, 1, sizeof(ChallengeIV), f);
+		fclose(f);
+	}
+
+	doubleDesDecrypt(key, MechaChallenge1);
+	uint8_t random[8];
+	xor_bit(MechaChallenge1, ChallengeIV, random, 8);
+
+	// MechaChallenge2 and MechaChallenge3 let's the card verify the console
+
+	xor_bit(nonce, ChallengeIV, MechaResponse1, 8);
+	doubleDesEncrypt(key, MechaResponse1);
+
+	xor_bit(random, MechaResponse1, MechaResponse2, 8);
+	doubleDesEncrypt(key, MechaResponse2);
+
+	uint8_t CardKey[] = {'M', 'e', 'c', 'h', 'a', 'P', 'w', 'n'};
+	xor_bit(CardKey, MechaResponse2, MechaResponse3, 8);
+	doubleDesEncrypt(key, MechaResponse3);
+}
+
 void MemoryCardProtocol::AuthXor()
 {
 	MC_LOG.WriteLn("%s", __FUNCTION__);
@@ -423,34 +513,98 @@ void MemoryCardProtocol::AuthXor()
 	const u8 modeByte = fifoIn.front();
 	fifoIn.pop_front();
 
+	static u8 xorResult = 0;
+
 	switch (modeByte)
 	{
 		// When encountered, the command length in RECV3 is guaranteed to be 14,
 		// and the PS2 is expecting us to XOR the data it is about to send.
-		case 0x01:
-		case 0x02:
-		case 0x04:
-		case 0x0f:
-		case 0x11:
-		case 0x13:
-		{
-			// Long + XOR
+		case 0x01: // get iv
+			generateIvSeedNonce();
 			fifoOut.push_back(0x00);
 			fifoOut.push_back(0x2b);
-			u8 xorResult = 0x00;
-
-			for (size_t xorCounter = 0; xorCounter < 8; xorCounter++)
+			xorResult = 0x00;
+			for (int i = 0; i < 8; i++)
 			{
-				const u8 toXOR = fifoIn.front();
-				fifoIn.pop_front();
-				xorResult ^= toXOR;
-				fifoOut.push_back(0x00);
+				const u8 value = iv[7 - i];
+				fifoOut.push_back(value);
+				xorResult ^= value;
 			}
-
 			fifoOut.push_back(xorResult);
 			fifoOut.push_back(mcd->term);
 			break;
-		}
+
+		case 0x02: // get seed
+			fifoOut.push_back(0x00);
+			fifoOut.push_back(0x2b);
+			xorResult = 0x00;
+			for (int i = 0; i < 8; i++)
+			{
+				const u8 value = seed[7 - i];
+				fifoOut.push_back(value);
+				xorResult ^= value;
+			}
+			fifoOut.push_back(xorResult);
+			fifoOut.push_back(mcd->term);
+			break;
+
+		case 0x04: // get nonce
+			fifoOut.push_back(0x00);
+			fifoOut.push_back(0x2b);
+			xorResult = 0x00;
+			for (int i = 0; i < 8; i++)
+			{
+				const u8 value = nonce[7 - i];
+				fifoOut.push_back(value);
+				xorResult ^= value;
+			}
+			fifoOut.push_back(xorResult);
+			fifoOut.push_back(mcd->term);
+			break;
+
+		case 0x0F: // CardResponse1
+			generateResponse();
+			fifoOut.push_back(0x00);
+			fifoOut.push_back(0x2b);
+			xorResult = 0;
+			for (int i = 0; i < 8; i++)
+			{
+				const u8 value = MechaResponse1[7 - i];
+				fifoOut.push_back(value);
+				xorResult ^= value;
+			}
+			fifoOut.push_back(xorResult);
+			fifoOut.push_back(mcd->term);
+			break;
+
+		case 0x11: // CardResponse2
+			fifoOut.push_back(0x00);
+			fifoOut.push_back(0x2b);
+			xorResult = 0;
+			for (int i = 0; i < 8; i++)
+			{
+				const u8 value = MechaResponse2[7 - i];
+				fifoOut.push_back(value);
+				xorResult ^= value;
+			}
+			fifoOut.push_back(xorResult);
+			fifoOut.push_back(mcd->term);
+			break;
+
+		case 0x13: // CardResponse3
+			fifoOut.push_back(0x00);
+			fifoOut.push_back(0x2b);
+			xorResult = 0;
+			for (int i = 0; i < 8; i++)
+			{
+				const u8 value = MechaResponse3[7 - i];
+				fifoOut.push_back(value);
+				xorResult ^= value;
+			}
+			fifoOut.push_back(xorResult);
+			fifoOut.push_back(mcd->term);
+			break;
+
 		// When encountered, the command length in RECV3 is guaranteed to be 5,
 		// and there is no attempt to XOR anything.
 		case 0x00:
@@ -475,16 +629,55 @@ void MemoryCardProtocol::AuthXor()
 		// to send the XOR, it wants us to send the 0x2b and terminator as the
 		// last two bytes.
 		case 0x06:
-		case 0x07:
-		case 0x0b:
-		{
-			// Long + No XOR
+			for (int i = 7; i >= 0; i--)
+			{
+				u8 data = fifoIn.front();
+				fifoIn.pop_front();
+				MechaChallenge3[i] = data;
+			}
 			The2bTerminator(14);
 			break;
-		}
+		case 0x07:
+			for (int i = 7; i >= 0; i--)
+			{
+				u8 data = fifoIn.front();
+				fifoIn.pop_front();
+				MechaChallenge2[i] = data;
+			}
+			The2bTerminator(14);
+			break;
+		case 0x0b:
+			for (int i = 7; i >= 0; i--)
+			{
+				u8 data = fifoIn.front();
+				fifoIn.pop_front();
+				MechaChallenge1[i] = data;
+			}
+			The2bTerminator(14);
+			break;
 		default:
 			Console.Warning("%s(queue) Unexpected modeByte (%02X), please report to the PCSX2 team", __FUNCTION__, modeByte);
 			break;
+	}
+}
+
+void MemoryCardProtocol::Crypt()
+{
+	MC_LOG.WriteLn("%s", __FUNCTION__);
+	PS1_FAIL();
+	const u8 modeByte = fifoIn.front();
+	fifoIn.pop_front();
+
+	static u8 xorResult = 0;
+	static u8 buf[9];
+
+	switch (modeByte)
+	{
+		default:
+			Console.WriteLn("mode: %02x, size: %d", modeByte, fifoIn.size());
+			fifoOut.push_back(0x00);
+			fifoOut.push_back(0x2b);
+			fifoOut.push_back(mcd->term);
 	}
 }
 
@@ -492,6 +685,7 @@ void MemoryCardProtocol::AuthF3()
 {
 	MC_LOG.WriteLn("%s", __FUNCTION__);
 	PS1_FAIL();
+	key = dex_key;
 	The2bTerminator(5);
 }
 
@@ -499,5 +693,206 @@ void MemoryCardProtocol::AuthF7()
 {
 	MC_LOG.WriteLn("%s", __FUNCTION__);
 	PS1_FAIL();
+	const u8 modeByte = fifoIn.front();
+	fifoIn.pop_front();
+	if (modeByte == 1)
+	{
+		key = cex_key;
+	}
 	The2bTerminator(5);
 }
+
+/*
+SIO_WRITE memcardAuth(u8 data)
+{
+	static bool doXorCheck = false;
+	static u8 xorResult = 0;
+	static uint8_t *buff = 0;
+
+	if (buff)
+		*buff-- = data;
+
+	if(sio.bufCount == 10)
+		buff = 0;
+
+	if(sio.bufCount == 2)
+	{
+		switch(data)
+		{
+			case 0x01: // get iv
+				generateIvSeedNonce();
+				doXorCheck = false;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				sio.buf[12] = 0;
+				for (int i = 0; i < 8; i++)
+				{
+					sio.buf[4 + i] = iv[7 - i];
+					sio.buf[12] ^= sio.buf[4 + i];
+				}
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+
+			case 0x02: // get seed
+				doXorCheck = false;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				sio.buf[12] = 0;
+				for (int i = 0; i < 8; i++)
+				{
+					sio.buf[4 + i] = seed[7 - i];
+					sio.buf[12] ^= sio.buf[4 + i];
+				}
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+
+			case 0x04: // get nonce
+				doXorCheck = false;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				sio.buf[12] = 0;
+				for (int i = 0; i < 8; i++)
+				{
+					sio.buf[4 + i] = nonce[7 - i];
+					sio.buf[12] ^= sio.buf[4 + i];
+				}
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+
+			case 0x06:
+				buff = &MechaChallenge3[7];
+				doXorCheck = false;
+				MemcardResponse();
+				break;
+			case 0x07:
+				buff = &MechaChallenge2[7];
+				doXorCheck = false;
+				MemcardResponse();
+				break;
+			case 0x0B:
+				buff = &MechaChallenge1[7];
+				doXorCheck = false;
+				MemcardResponse();
+				break;
+
+			case 0x0F: // CardResponse1
+				generateResponse();
+				doXorCheck = false;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				sio.buf[12] = 0;
+				for (int i = 0; i < 8; i++)
+				{
+					sio.buf[4 + i] = MechaResponse1[7 - i];
+					sio.buf[12] ^= sio.buf[4 + i];
+				}
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+			case 0x11: // CardResponse2
+				doXorCheck = false;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				sio.buf[12] = 0;
+				for (int i = 0; i < 8; i++)
+				{
+					sio.buf[4 + i] = MechaResponse2[7 - i];
+					sio.buf[12] ^= sio.buf[4 + i];
+				}
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+			case 0x13: // CardResponse3
+				doXorCheck = false;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				sio.buf[12] = 0;
+				for (int i = 0; i < 8; i++)
+				{
+					sio.buf[4 + i] = MechaResponse3[7 - i];
+					sio.buf[12] ^= sio.buf[4 + i];
+				}
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+				doXorCheck = true;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+
+			default:
+				doXorCheck = false;
+				MemcardResponse();
+				break;
+		}
+	}
+	else if(doXorCheck)
+	{
+		switch(sio.bufCount)
+		{
+			case 3: break;
+			case 12: sio.buf[12] = xorResult; break;
+			default: xorResult ^= data; break;
+		};
+	}
+}
+
+SIO_WRITE memcardCrypt(u8 data)
+{
+	static bool doXorCheck = false;
+	static u8 xorResult = 0;
+	static u8 buf[9];
+	static u8 offset = 0;
+	static bool receive = false;
+
+	if (receive && offset < 9)
+		buf[offset++] = data;
+
+	if(sio.bufCount == 2)
+	{
+		switch(data)
+		{
+			case 0x40:
+			case 0x50:
+			case 0x42:
+			case 0x52:
+				receive = false;
+				doXorCheck = true;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+
+			case 0x41:
+			case 0x51:
+				receive = true;
+				offset = 0;
+				doXorCheck = false;
+				MemcardResponse();
+				break;
+
+			case 0x43:
+			case 0x53:
+				receive = false;
+				doXorCheck = false;
+				xorResult = 0;
+				sio.buf[3] = 0x2B;
+				memcpy(&sio.buf[4], buf, 9);
+				sio.buf[sio.bufSize] = mcd->term;
+				break;
+
+			default:
+				receive = false;
+				doXorCheck = false;
+				MemcardResponse();
+				break;
+		}
+	}
+	else if(doXorCheck)
+	{
+		switch(sio.bufCount)
+		{
+			case 3: break;
+			case 12: sio.buf[12] = xorResult; break;
+			default: xorResult ^= data; break;
+		};
+	}
+}*/
