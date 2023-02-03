@@ -342,7 +342,6 @@ void V_Voice::Stop()
 
 uint TickInterval = 768;
 static const int SanityInterval = 4800;
-extern void UpdateDebugDialog();
 
 __forceinline bool StartQueuedVoice(uint coreidx, uint voiceidx)
 {
@@ -402,11 +401,6 @@ __forceinline void TimeUpdate(u32 cClocks)
 		dClocks = TickInterval * SanityInterval;
 		lClocks = cClocks - dClocks;
 	}
-
-// Visual debug display showing all core's activity! Disabled via #define on release builds.
-#if defined(_WIN32) && !defined(PCSX2_CORE)
-	UpdateDebugDialog();
-#endif
 
 	if (SynchMode == 1) // AsyncMix on
 		SndBuffer::UpdateTempoChangeAsyncMixing();
@@ -1099,6 +1093,8 @@ static __forceinline void SetLoWord(u32& src, u16 value)
 	((u16*)&src)[0] = value;
 }
 
+// Not used
+#if 0
 static __forceinline u16 GetHiWord(u32& src)
 {
 	return ((u16*)&src)[1];
@@ -1108,6 +1104,7 @@ static __forceinline u16 GetLoWord(u32& src)
 {
 	return ((u16*)&src)[0];
 }
+#endif
 
 template <int CoreIdx, int VoiceIdx, int param>
 static void RegWrite_VoiceParams(u16 value)

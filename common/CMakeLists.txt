@@ -15,6 +15,7 @@ target_sources(common PRIVATE
 	SafeArray.inl
 	Console.cpp
 	CrashHandler.cpp
+	DynamicLibrary.cpp
 	EventSource.cpp
 	Exceptions.cpp
 	FastJmp.cpp
@@ -66,6 +67,7 @@ target_sources(common PRIVATE
 	boost_spsc_queue.hpp
 	Console.h
 	CrashHandler.h
+	DynamicLibrary.h
 	Easing.h
 	EnumOps.h
 	EventSource.h
@@ -77,6 +79,7 @@ target_sources(common PRIVATE
 	HeterogeneousContainers.h
 	Image.h
 	LRUCache.h
+	HeapArray.h
 	HTTPDownloader.h
 	MemcpyFast.h
 	MemorySettingsInterface.h
@@ -88,6 +91,7 @@ target_sources(common PRIVATE
 	PrecompiledHeader.h
 	ProgressCallback.h
 	ReadbackSpinManager.h
+	RedtapeWilCom.h
 	RedtapeWindows.h
 	SafeArray.h
 	ScopedGuard.h

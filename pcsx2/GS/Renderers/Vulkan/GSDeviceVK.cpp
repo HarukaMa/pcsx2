@@ -2867,17 +2867,6 @@ void GSDeviceVK::SetPSConstantBuffer(const GSHWDrawConfig::PSConstantBuffer& cb)
 		m_dirty_flags |= DIRTY_FLAG_PS_CONSTANT_BUFFER;
 }
 
-static void ImageBarrier(GSTextureVK* tex, VkAccessFlags src_mask, VkAccessFlags dst_mask, VkImageLayout src_layout,
-	VkImageLayout dst_layout, VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage, bool pixel_local)
-{
-	const VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, src_mask, dst_mask,
-		src_layout, dst_layout, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, tex->GetTexture().GetImage(),
-		{VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u}};
-
-	vkCmdPipelineBarrier(g_vulkan_context->GetCurrentCommandBuffer(), src_stage, dst_stage,
-		pixel_local ? VK_DEPENDENCY_BY_REGION_BIT : 0, 0, nullptr, 0, nullptr, 1, &barrier);
-}
-
 static void ColorBufferBarrier(GSTextureVK* rt)
 {
 	const VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr,
@@ -3114,7 +3103,7 @@ void GSDeviceVK::RenderHW(GSHWDrawConfig& config)
 	else if (config.require_one_barrier && !m_features.texture_barrier)
 	{
 		// requires a copy of the RT
-		draw_rt_clone = static_cast<GSTextureVK*>(CreateTexture(rtsize.x, rtsize.y, 1, GSTexture::Format::Color, false));
+		draw_rt_clone = static_cast<GSTextureVK*>(CreateTexture(rtsize.x, rtsize.y, 1, GSTexture::Format::Color, true));
 		if (draw_rt_clone)
 		{
 			EndRenderPass();

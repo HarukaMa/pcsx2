@@ -306,7 +306,7 @@ bool GSC_TombRaiderUnderWorld(const GSFrameInfo& fi, int& skip) noexcept
 {
 	if (skip == 0)
 	{
-		if (fi.TME && fi.FBP == 0x01000 && fi.FPSM == fi.TPSM && fi.TPSM == PSM_PSMCT32 && (fi.TBP0 == 0x2B60 /*|| fi.TBP0 == 0x2EFF || fi.TBP0 ==0x2F00 || fi.TBP0 == 0x3020*/ || fi.TBP0 >= 0x2C01 && fi.TBP0 != 0x3029 && fi.TBP0 != 0x302d))
+		if (fi.TME && fi.FBP == 0x01000 && fi.FPSM == fi.TPSM && fi.TPSM == PSM_PSMCT32 && (fi.TBP0 == 0x2B60 /*|| fi.TBP0 == 0x2EFF || fi.TBP0 ==0x2F00 || fi.TBP0 == 0x3020*/ || (fi.TBP0 >= 0x2C01 && fi.TBP0 != 0x3029 && fi.TBP0 != 0x302d)))
 		{
 			skip = 1; // Garbage TC
 		}
@@ -618,7 +618,9 @@ bool GSC_YakuzaGames(const GSFrameInfo& fi, int& skip) noexcept
 		{
 			// Don't enable hack on native res if crc is below aggressive.
 			// Upscaling issues, removes glow/blur effect which fixes ghosting.
-			skip = 3;
+			// Skip 3 removes most of the post effect which doesn't upscale well, but causes a depth effect to completely mess up.
+			// Skip 9 removes both the depth and blur effect, which seems to work okay.
+			skip = 9;
 		}
 	}
 

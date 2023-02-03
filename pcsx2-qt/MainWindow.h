@@ -25,6 +25,7 @@
 #include "Tools/InputRecording/InputRecordingViewer.h"
 #include "Settings/ControllerSettingsDialog.h"
 #include "Settings/SettingsDialog.h"
+#include "Debugger/DebuggerWindow.h"
 #include "ui_MainWindow.h"
 
 class QProgressBar;
@@ -129,6 +130,7 @@ private Q_SLOTS:
 	DisplayWidget* createDisplay(bool fullscreen, bool render_to_main);
 	DisplayWidget* updateDisplay(bool fullscreen, bool render_to_main, bool surfaceless);
 	void displayResizeRequested(qint32 width, qint32 height);
+	void relativeMouseModeRequested(bool enabled);
 	void destroyDisplay();
 	void focusDisplayWidget();
 
@@ -168,6 +170,7 @@ private Q_SLOTS:
 	void onSaveGSDumpActionTriggered();
 	void onBlockDumpActionToggled(bool checked);
 	void onShowAdvancedSettingsToggled(bool checked);
+	void onToolsVideoCaptureToggled(bool checked);
 
 	// Input Recording
 	void onInputRecNewActionTriggered();
@@ -231,6 +234,7 @@ private:
 	void restoreDisplayWindowGeometryFromConfig();
 	void createDisplayWidget(bool fullscreen, bool render_to_main, bool is_exclusive_fullscreen);
 	void destroyDisplayWidget(bool show_game_list);
+	void updateDisplayWidgetCursor();
 	void setDisplayFullscreen(const std::string& fullscreen_mode);
 
 	SettingsDialog* getSettingsDialog();
@@ -238,6 +242,9 @@ private:
 
 	InputRecordingViewer* getInputRecordingViewer();
 	void updateInputRecordingActions(bool started);
+
+	DebuggerWindow* getDebuggerWindow();
+	void openDebugger();
 
 	ControllerSettingsDialog* getControllerSettingsDialog();
 	void doControllerSettings(ControllerSettingsDialog::Category category = ControllerSettingsDialog::Category::Count);
@@ -269,6 +276,8 @@ private:
 	ControllerSettingsDialog* m_controller_settings_dialog = nullptr;
 	AutoUpdaterDialog* m_auto_updater_dialog = nullptr;
 
+	DebuggerWindow* m_debugger_window = nullptr;
+
 	QProgressBar* m_status_progress_widget = nullptr;
 	QLabel* m_status_verbose_widget = nullptr;
 	QLabel* m_status_renderer_widget = nullptr;
@@ -283,6 +292,7 @@ private:
 	quint32 m_current_game_crc;
 
 	bool m_display_created = false;
+	bool m_relative_mouse_mode = false;
 	bool m_save_states_invalidated = false;
 	bool m_was_paused_on_surface_loss = false;
 	bool m_was_disc_change_request = false;

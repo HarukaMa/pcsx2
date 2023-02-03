@@ -19,11 +19,7 @@
 
 #include "R5900OpcodeTables.h"
 #include "R5900Exceptions.h"
-#ifndef PCSX2_CORE
-#include "gui/SysThreads.h"
-#else
 #include "VMManager.h"
-#endif
 
 #include "Elfheader.h"
 
@@ -58,9 +54,7 @@ void intBreakpoint(bool memcheck)
 	}
 
 	CBreakPoints::SetBreakpointTriggered(true);
-#ifndef PCSX2_CORE
-	GetCoreThread().PauseSelfDebug();
-#endif
+	VMManager::SetPaused(true);
 	throw Exception::ExitCpuExecute();
 }
 
@@ -482,11 +476,6 @@ void JALR()
 static void intReserve()
 {
 	// fixme : detect cpu for use the optimize asm code
-}
-
-static void intAlloc()
-{
-	// Nothing to do!
 }
 
 static void intReset()

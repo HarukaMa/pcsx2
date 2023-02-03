@@ -17,6 +17,7 @@
 
 #include "common/emitter/tools.h"
 #include "common/General.h"
+#include <array>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,115 @@ class SettingsInterface;
 class SettingsWrapper;
 
 enum class CDVD_SourceType : uint8_t;
+
+/// Generic setting information which can be reused in multiple components.
+struct SettingInfo
+{
+	using GetOptionsCallback = std::vector<std::pair<std::string, std::string>>(*)();
+
+	enum class Type
+	{
+		Boolean,
+		Integer,
+		IntegerList,
+		Float,
+		String,
+		StringList,
+		Path,
+	};
+
+	Type type;
+	const char* name;
+	const char* display_name;
+	const char* description;
+	const char* default_value;
+	const char* min_value;
+	const char* max_value;
+	const char* step_value;
+	const char* format;
+	const char* const* options; // For integer lists.
+	GetOptionsCallback get_options; // For string lists.
+	float multiplier;
+
+	const char* StringDefaultValue() const;
+	bool BooleanDefaultValue() const;
+	s32 IntegerDefaultValue() const;
+	s32 IntegerMinValue() const;
+	s32 IntegerMaxValue() const;
+	s32 IntegerStepValue() const;
+	float FloatDefaultValue() const;
+	float FloatMinValue() const;
+	float FloatMaxValue() const;
+	float FloatStepValue() const;
+};
+
+enum class GenericInputBinding : u8;
+
+// TODO(Stenzek): Move to InputCommon.h or something?
+struct InputBindingInfo
+{
+	enum class Type : u8
+	{
+		Unknown,
+		Button,
+		Axis,
+		HalfAxis,
+		Motor,
+		Pointer, // Receive relative mouse movement events, bind_index is offset by the axis.
+		Keyboard, // Receive host key events, bind_index is offset by the key code.
+		Device, // Used for special-purpose device selection, e.g. force feedback.
+		Macro,
+	};
+
+	const char* name;
+	const char* display_name;
+	Type bind_type;
+	u16 bind_index;
+	GenericInputBinding generic_mapping;
+};
+
+/// Generic input bindings. These roughly match a DualShock 4 or XBox One controller.
+/// They are used for automatic binding to PS2 controller types, and for big picture mode navigation.
+enum class GenericInputBinding : u8
+{
+	Unknown,
+
+	DPadUp,
+	DPadRight,
+	DPadLeft,
+	DPadDown,
+
+	LeftStickUp,
+	LeftStickRight,
+	LeftStickDown,
+	LeftStickLeft,
+	L3,
+
+	RightStickUp,
+	RightStickRight,
+	RightStickDown,
+	RightStickLeft,
+	R3,
+
+	Triangle, // Y on XBox pads.
+	Circle, // B on XBox pads.
+	Cross, // A on XBox pads.
+	Square, // X on XBox pads.
+
+	Select, // Share on DS4, View on XBox pads.
+	Start, // Options on DS4, Menu on XBox pads.
+	System, // PS button on DS4, Guide button on XBox pads.
+
+	L1, // LB on Xbox pads.
+	L2, // Left trigger on XBox pads.
+	R1, // RB on XBox pads.
+	R2, // Right trigger on Xbox pads.
+
+	SmallMotor, // High frequency vibration.
+	LargeMotor, // Low frequency vibration.
+
+	Count,
+};
 
 enum GamefixId
 {
@@ -488,11 +598,15 @@ struct Pcsx2Config
 	{
 		static const char* AspectRatioNames[];
 		static const char* FMVAspectRatioSwitchNames[];
+		static const char* VideoCaptureContainers[];
 
 		static const char* GetRendererName(GSRendererType type);
 
 		static constexpr float DEFAULT_FRAME_RATE_NTSC = 59.94f;
 		static constexpr float DEFAULT_FRAME_RATE_PAL = 50.00f;
+
+		static constexpr u32 DEFAULT_VIDEO_CAPTURE_BITRATE = 6000;
+		static const char* DEFAULT_VIDEO_CAPTURE_CONTAINER;
 
 		union
 		{
@@ -620,6 +734,7 @@ struct Pcsx2Config
 		int ShadeBoost_Brightness{50};
 		int ShadeBoost_Contrast{50};
 		int ShadeBoost_Saturation{50};
+		int PNGCompressionLevel{1};
 
 		int SaveN{0};
 		int SaveL{5000};
@@ -628,19 +743,17 @@ struct Pcsx2Config
 		GSScreenshotFormat ScreenshotFormat{GSScreenshotFormat::PNG};
 		int ScreenshotQuality{50};
 
+		std::string VideoCaptureContainer{DEFAULT_VIDEO_CAPTURE_CONTAINER};
+		std::string VideoCaptureCodec;
+		int VideoCaptureBitrate{DEFAULT_VIDEO_CAPTURE_BITRATE};
+
 		std::string Adapter;
+		std::string HWDumpDirectory;
+		std::string SWDumpDirectory;
 
 		GSOptions();
 
 		void LoadSave(SettingsWrapper& wrap);
-
-#ifndef PCSX2_CORE
-		/// Because some GS settings are stored in a separate INI in wx, we need a way to reload them.
-		/// This is because the SettingsWrapper is only created on full save/load.
-		void ReloadIniSettings();
-#else
-		void LoadSaveIniSettings(SettingsWrapper& wrap);
-#endif
 
 		/// Sets user hack values to defaults when user hacks are not enabled.
 		void MaskUserHacks();
@@ -761,7 +874,6 @@ struct Pcsx2Config
 		};
 		static const char* DnsModeNames[];
 
-#ifdef PCSX2_CORE
 		struct HostEntry
 		{
 			std::string Url;
@@ -782,7 +894,6 @@ struct Pcsx2Config
 				return !this->operator==(right);
 			}
 		};
-#endif
 
 		bool EthEnable{false};
 		NetApi EthApi{NetApi::Unset};
@@ -800,9 +911,7 @@ struct Pcsx2Config
 		DnsMode ModeDNS1{DnsMode::Auto};
 		DnsMode ModeDNS2{DnsMode::Auto};
 
-#ifdef PCSX2_CORE
 		std::vector<HostEntry> EthHosts;
-#endif
 
 		bool HddEnable{false};
 		std::string HddFile;
@@ -835,9 +944,7 @@ struct Pcsx2Config
 				   OpEqu(ModeDNS1) &&
 				   OpEqu(ModeDNS2) &&
 
-#ifdef PCSX2_CORE
 				   OpEqu(EthHosts) &&
-#endif
 
 				   OpEqu(HddEnable) &&
 				   OpEqu(HddFile) &&
@@ -1003,6 +1110,32 @@ struct Pcsx2Config
 	};
 
 	// ------------------------------------------------------------------------
+	struct USBOptions
+	{
+		enum : u32
+		{
+			NUM_PORTS = 2
+		};
+
+		struct Port
+		{
+			s32 DeviceType;
+			u32 DeviceSubtype;
+
+			bool operator==(const USBOptions::Port& right) const;
+			bool operator!=(const USBOptions::Port& right) const;
+		};
+
+		std::array<Port, NUM_PORTS> Ports;
+
+		USBOptions();
+		void LoadSave(SettingsWrapper& wrap);
+
+		bool operator==(const USBOptions& right) const;
+		bool operator!=(const USBOptions& right) const;
+	};
+
+	// ------------------------------------------------------------------------
 	// Options struct for each memory card.
 	//
 	struct McdOptions
@@ -1059,12 +1192,10 @@ struct Pcsx2Config
 		EnableNoInterlacingPatches : 1,
 		// TODO - Vaser - where are these settings exposed in the Qt UI?
 		EnableRecordingTools : 1,
-#ifdef PCSX2_CORE
 		EnableGameFixes : 1, // enables automatic game fixes
 		SaveStateOnShutdown : 1, // default value for saving state on shutdown
 		EnableDiscordPresence : 1, // enables discord rich presence integration
 		InhibitScreensaver : 1,
-#endif
 		// when enabled uses BOOT2 injection, skipping sony bios splashes
 		UseBOOT2Injection : 1,
 		BackupSavestate : 1,
@@ -1096,6 +1227,7 @@ struct Pcsx2Config
 	FramerateOptions Framerate;
 	SPU2Options SPU2;
 	DEV9Options DEV9;
+	USBOptions USB;
 
 	TraceLogFilters Trace;
 
@@ -1131,10 +1263,6 @@ struct Pcsx2Config
 	{
 		return !this->operator==(right);
 	}
-
-	// You shouldn't assign to this class, because it'll mess with the runtime variables (Current...).
-	// But you can still use this to copy config. Only needed until we drop wx.
-	void CopyConfig(const Pcsx2Config& cfg);
 
 	/// Copies runtime configuration settings (e.g. frame limiter state).
 	void CopyRuntimeConfig(Pcsx2Config& cfg);

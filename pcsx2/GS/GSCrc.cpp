@@ -17,6 +17,7 @@
 #include "GSCrc.h"
 #include "GSExtra.h"
 #include "GS.h"
+#include "HostSettings.h"
 #include "common/StringUtil.h"
 
 const CRC::Game CRC::m_games[] =
@@ -337,7 +338,7 @@ const CRC::Game& CRC::Lookup(u32 crc)
 	printf("GS Lookup CRC:%08X\n", crc);
 	if (m_map.empty())
 	{
-		std::string exclusions = theApp.GetConfigS("CrcHacksExclusions");
+		std::string exclusions = Host::GetStringSettingValue("EmuCore/GS", "CrcHacksExclusions");
 		if (exclusions.length() != 0)
 			printf("GS: CrcHacksExclusions: %s\n", exclusions.c_str());
 		int crcDups = 0;

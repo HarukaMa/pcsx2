@@ -18,15 +18,12 @@
 #include "R3000A.h"
 #include "Common.h"
 #include "Config.h"
+#include "VMManager.h"
 
 #include "R5900OpcodeTables.h"
 #include "DebugTools/Breakpoints.h"
 #include "IopBios.h"
 #include "IopHw.h"
-
-#ifndef PCSX2_CORE
-#include "gui/SysThreads.h"
-#endif
 
 using namespace R3000A;
 
@@ -147,9 +144,7 @@ void psxBreakpoint(bool memcheck)
 	}
 
 	CBreakPoints::SetBreakpointTriggered(true);
-#ifndef PCSX2_CORE
-	GetCoreThread().PauseSelfDebug();
-#endif
+	VMManager::SetPaused(true);
 	throw Exception::ExitCpuExecute();
 }
 

@@ -97,7 +97,7 @@ bool GSDeviceOGL::Create()
 	if (!GLLoader::check_gl_requirements())
 		return false;
 
-	if (!theApp.GetConfigB("disable_shader_cache"))
+	if (!GSConfig.DisableShaderCache)
 	{
 		if (!m_shader_cache.Open(false, EmuFolders::Cache, SHADER_CACHE_VERSION))
 			Console.Warning("Shader cache failed to open.");
@@ -1868,7 +1868,7 @@ void GSDeviceOGL::RenderHW(GSHWDrawConfig& config)
 	else if (config.require_one_barrier && !m_features.texture_barrier)
 	{
 		// Requires a copy of the RT
-		draw_rt_clone = CreateTexture(rtsize.x, rtsize.y, 1, GSTexture::Format::Color, false);
+		draw_rt_clone = CreateTexture(rtsize.x, rtsize.y, 1, GSTexture::Format::Color, true);
 		GL_PUSH("Copy RT to temp texture for fbmask {%d,%d %dx%d}",
 			config.drawarea.left, config.drawarea.top,
 			config.drawarea.width(), config.drawarea.height());

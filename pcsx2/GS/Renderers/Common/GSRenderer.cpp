@@ -15,51 +15,25 @@
 
 #include "PrecompiledHeader.h"
 #include "GSRenderer.h"
+#include "GS/GSCapture.h"
 #include "GS/GSGL.h"
 #include "Host.h"
 #include "HostDisplay.h"
 #include "PerformanceMetrics.h"
 #include "pcsx2/Config.h"
 #include "IconsFontAwesome5.h"
+#include "VMManager.h"
 #include "common/FileSystem.h"
 #include "common/Image.h"
 #include "common/Path.h"
 #include "common/StringUtil.h"
 #include "common/Timer.h"
 #include "fmt/core.h"
+#include <algorithm>
 #include <array>
 #include <deque>
 #include <thread>
 #include <mutex>
-
-#ifndef PCSX2_CORE
-#include "gui/AppCoreThread.h"
-#if defined(__unix__)
-#include <X11/keysym.h>
-#elif defined(__APPLE__)
-#include <Carbon/Carbon.h>
-#endif
-
-static std::string GetDumpName()
-{
-	return StringUtil::wxStringToUTF8String(GameInfo::gameName);
-}
-static std::string GetDumpSerial()
-{
-	return StringUtil::wxStringToUTF8String(GameInfo::gameSerial);
-}
-#else
-#include "VMManager.h"
-
-static std::string GetDumpName()
-{
-	return VMManager::GetGameName();
-}
-static std::string GetDumpSerial()
-{
-	return VMManager::GetGameSerial();
-}
-#endif
 
 static constexpr std::array<PresentShader, 6> s_tv_shader_indices = {
 	PresentShader::COPY, PresentShader::SCANLINE,
@@ -71,9 +45,15 @@ static std::mutex s_screenshot_threads_mutex;
 
 std::unique_ptr<GSRenderer> g_gs_renderer;
 
+// Since we read this on the EE thread, we can't put it in the renderer, because
+// we might be switching while the other thread reads it.
+static GSVector4 s_last_draw_rect;
+
+
 GSRenderer::GSRenderer()
 	: m_shader_time_start(Common::Timer::GetCurrentValue())
 {
+	s_last_draw_rect = GSVector4::zero();
 }
 
 GSRenderer::~GSRenderer() = default;
@@ -89,6 +69,7 @@ void GSRenderer::Reset(bool hardware_reset)
 
 void GSRenderer::Destroy()
 {
+	GSCapture::EndCapture();
 }
 
 bool GSRenderer::Merge(int field)
@@ -621,9 +602,9 @@ void GSRenderer::VSync(u32 field, bool registers_written)
 {
 	Flush(GSFlushReason::VSYNC);
 
-	if (s_dump && s_n >= s_saven)
+	if (GSConfig.DumpGSData && s_n >= GSConfig.SaveN)
 	{
-		m_regs->Dump(root_sw + StringUtil::StdStringFromFormat("%05d_f%lld_gs_reg.txt", s_n, g_perfmon.GetFrame()));
+		m_regs->Dump(GetDrawDumpPath("vsync_%05d_f%lld_gs_reg.txt", s_n, g_perfmon.GetFrame()));
 	}
 
 	const int fb_sprite_blits = g_perfmon.GetDisplayFramebufferSpriteBlits();
@@ -686,6 +667,7 @@ void GSRenderer::VSync(u32 field, bool registers_written)
 		draw_rect = CalculateDrawDstRect(g_host_display->GetWindowWidth(), g_host_display->GetWindowHeight(),
 			src_rect, current->GetSize(), g_host_display->GetDisplayAlignment(), g_host_display->UsesLowerLeftOrigin(),
 			GetVideoMode() == GSVideoMode::SDTV_480P || (GSConfig.PCRTCOverscan && GSConfig.PCRTCOffsets));
+		s_last_draw_rect = draw_rect;
 
 		if (GSConfig.CASMode != GSCASMode::Disabled)
 		{
@@ -728,11 +710,6 @@ void GSRenderer::VSync(u32 field, bool registers_written)
 	PerformanceMetrics::Update(registers_written, fb_sprite_frame, false);
 
 	// snapshot
-	// wx is dumb and call this from the UI thread...
-#ifndef PCSX2_CORE
-	std::unique_lock snapshot_lock(m_snapshot_mutex);
-#endif
-
 	if (!m_snapshot.empty())
 	{
 		u32 screenshot_width, screenshot_height;
@@ -754,7 +731,7 @@ void GSRenderer::VSync(u32 field, bool registers_written)
 			std::string_view compression_str;
 			if (GSConfig.GSDumpCompression == GSDumpCompressionMethod::Uncompressed)
 			{
-				m_dump = std::unique_ptr<GSDumpBase>(new GSDumpUncompressed(m_snapshot, GetDumpSerial(), m_crc,
+				m_dump = std::unique_ptr<GSDumpBase>(new GSDumpUncompressed(m_snapshot, VMManager::GetGameSerial(), m_crc,
 					screenshot_width, screenshot_height,
 					screenshot_pixels.empty() ? nullptr : screenshot_pixels.data(),
 					fd, m_regs));
@@ -762,7 +739,7 @@ void GSRenderer::VSync(u32 field, bool registers_written)
 			}
 			else if (GSConfig.GSDumpCompression == GSDumpCompressionMethod::LZMA)
 			{
-				m_dump = std::unique_ptr<GSDumpBase>(new GSDumpXz(m_snapshot, GetDumpSerial(), m_crc,
+				m_dump = std::unique_ptr<GSDumpBase>(new GSDumpXz(m_snapshot, VMManager::GetGameSerial(), m_crc,
 					screenshot_width, screenshot_height,
 					screenshot_pixels.empty() ? nullptr : screenshot_pixels.data(),
 					fd, m_regs));
@@ -770,7 +747,7 @@ void GSRenderer::VSync(u32 field, bool registers_written)
 			}
 			else
 			{
-				m_dump = std::unique_ptr<GSDumpBase>(new GSDumpZst(m_snapshot, GetDumpSerial(), m_crc,
+				m_dump = std::unique_ptr<GSDumpBase>(new GSDumpZst(m_snapshot, VMManager::GetGameSerial(), m_crc,
 					screenshot_width, screenshot_height,
 					screenshot_pixels.empty() ? nullptr : screenshot_pixels.data(),
 					fd, m_regs));
@@ -817,13 +794,12 @@ void GSRenderer::VSync(u32 field, bool registers_written)
 		}
 	}
 
-#ifndef PCSX2_CORE
 	// capture
-	if (m_capture.IsCapturing())
+	if (GSCapture::IsCapturing())
 	{
 		if (GSTexture* current = g_gs_device->GetCurrent())
 		{
-			GSVector2i size = m_capture.GetSize();
+			GSVector2i size = GSCapture::GetSize();
 
 			bool res;
 			GSTexture::GSMap m;
@@ -834,12 +810,11 @@ void GSRenderer::VSync(u32 field, bool registers_written)
 
 			if (res)
 			{
-				m_capture.DeliverFrame(m.bits, m.pitch, !g_gs_device->IsRBSwapped());
+				GSCapture::DeliverFrame(m.bits, m.pitch, !g_gs_device->IsRBSwapped());
 				g_gs_device->DownloadTextureComplete();
 			}
 		}
 	}
-#endif
 }
 
 void GSRenderer::QueueSnapshot(const std::string& path, u32 gsdump_frames)
@@ -854,55 +829,58 @@ void GSRenderer::QueueSnapshot(const std::string& path, u32 gsdump_frames)
 	}
 	else
 	{
-		m_snapshot = "";
-
-		// append the game serial and title
-		if (std::string name(GetDumpName()); !name.empty())
-		{
-			Path::SanitizeFileName(&name);
-			if (name.length() > 219)
-				name.resize(219);
-			m_snapshot += name;
-		}
-		if (std::string serial(GetDumpSerial()); !serial.empty())
-		{
-			Path::SanitizeFileName(&serial);
-			m_snapshot += '_';
-			m_snapshot += serial;
-		}
-
-		time_t cur_time = time(nullptr);
-		char local_time[16];
-
-		if (strftime(local_time, sizeof(local_time), "%Y%m%d%H%M%S", localtime(&cur_time)))
-		{
-			static time_t prev_snap;
-			// The variable 'n' is used for labelling the screenshots when multiple screenshots are taken in
-			// a single second, we'll start using this variable for naming when a second screenshot request is detected
-			// at the same time as the first one. Hence, we're initially setting this counter to 2 to imply that
-			// the captured image is the 2nd image captured at this specific time.
-			static int n = 2;
-
-			m_snapshot += '_';
-
-			if (cur_time == prev_snap)
-				m_snapshot += fmt::format("{0}_({1})", local_time, n++);
-			else
-			{
-				n = 2;
-				m_snapshot += fmt::format("{}", local_time);
-			}
-			prev_snap = cur_time;
-		}
-
-		// prepend snapshots directory
-		m_snapshot = Path::Combine(EmuFolders::Snapshots, m_snapshot);
+		m_snapshot = GSGetBaseSnapshotFilename();
 	}
 
 	// this is really gross, but wx we get the snapshot request after shift...
-#ifdef PCSX2_CORE
 	m_dump_frames = gsdump_frames;
-#endif
+}
+
+std::string GSGetBaseSnapshotFilename()
+{
+	std::string filename;
+
+	// append the game serial and title
+	if (std::string name(VMManager::GetGameName()); !name.empty())
+	{
+		Path::SanitizeFileName(&name);
+		if (name.length() > 219)
+			name.resize(219);
+		filename += name;
+	}
+	if (std::string serial(VMManager::GetGameSerial()); !serial.empty())
+	{
+		Path::SanitizeFileName(&serial);
+		filename += '_';
+		filename += serial;
+	}
+
+	time_t cur_time = time(nullptr);
+	char local_time[16];
+
+	if (strftime(local_time, sizeof(local_time), "%Y%m%d%H%M%S", localtime(&cur_time)))
+	{
+		static time_t prev_snap;
+		// The variable 'n' is used for labelling the screenshots when multiple screenshots are taken in
+		// a single second, we'll start using this variable for naming when a second screenshot request is detected
+		// at the same time as the first one. Hence, we're initially setting this counter to 2 to imply that
+		// the captured image is the 2nd image captured at this specific time.
+		static int n = 2;
+
+		filename += '_';
+
+		if (cur_time == prev_snap)
+			filename += fmt::format("{0}_({1})", local_time, n++);
+		else
+		{
+			n = 2;
+			filename += fmt::format("{}", local_time);
+		}
+		prev_snap = cur_time;
+	}
+
+	// prepend snapshots directory
+	return Path::Combine(EmuFolders::Snapshots, filename);
 }
 
 void GSRenderer::StopGSDump()
@@ -924,6 +902,7 @@ void GSRenderer::PresentCurrentFrame()
 			const GSVector4 draw_rect(CalculateDrawDstRect(g_host_display->GetWindowWidth(), g_host_display->GetWindowHeight(),
 				src_rect, current->GetSize(), g_host_display->GetDisplayAlignment(), g_host_display->UsesLowerLeftOrigin(),
 				GetVideoMode() == GSVideoMode::SDTV_480P || (GSConfig.PCRTCOverscan && GSConfig.PCRTCOffsets)));
+			s_last_draw_rect = draw_rect;
 
 			const u64 current_time = Common::Timer::GetCurrentValue();
 			const float shader_time = static_cast<float>(Common::Timer::ConvertValueToSeconds(current_time - m_shader_time_start));
@@ -937,91 +916,34 @@ void GSRenderer::PresentCurrentFrame()
 	g_gs_device->RestoreAPIState();
 }
 
-#ifndef PCSX2_CORE
-
-bool GSRenderer::BeginCapture(std::string& filename)
+void GSTranslateWindowToDisplayCoordinates(float window_x, float window_y, float* display_x, float* display_y)
 {
-	return m_capture.BeginCapture(GetTvRefreshRate(), GetInternalResolution(), GetCurrentAspectRatioFloat(GetVideoMode() == GSVideoMode::SDTV_480P || (GSConfig.PCRTCOverscan && GSConfig.PCRTCOffsets)), filename);
+	const float draw_width = s_last_draw_rect.z - s_last_draw_rect.x;
+	const float draw_height = s_last_draw_rect.w - s_last_draw_rect.y;
+	const float rel_x = window_x - s_last_draw_rect.x;
+	const float rel_y = window_y - s_last_draw_rect.y;
+	if (rel_x < 0 || rel_x > draw_width || rel_y < 0 || rel_y > draw_height)
+	{
+		*display_x = -1.0f;
+		*display_y = -1.0f;
+		return;
+	}
+
+	*display_x = rel_x / draw_width;
+	*display_y = rel_y / draw_height;
+}
+
+bool GSRenderer::BeginCapture(std::string filename)
+{
+	return GSCapture::BeginCapture(GetTvRefreshRate(), GetInternalResolution(),
+		GetCurrentAspectRatioFloat(GetVideoMode() == GSVideoMode::SDTV_480P || (GSConfig.PCRTCOverscan && GSConfig.PCRTCOffsets)),
+		std::move(filename));
 }
 
 void GSRenderer::EndCapture()
 {
-	m_capture.EndCapture();
+	GSCapture::EndCapture();
 }
-
-void GSRenderer::KeyEvent(const HostKeyEvent& e)
-{
-#ifdef _WIN32
-	m_shift_key = !!(::GetAsyncKeyState(VK_SHIFT) & 0x8000);
-	m_control_key = !!(::GetAsyncKeyState(VK_CONTROL) & 0x8000);
-#elif defined(__APPLE__)
-	m_shift_key = CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK_Shift)
-	           || CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK_RightShift);
-	m_control_key = CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK_Control)
-	             || CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK_RightControl)
-	             || CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK_Command)
-	             || CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK_RightCommand);
-#else
-	switch (e.key)
-	{
-		case XK_Shift_L:
-		case XK_Shift_R:
-			m_shift_key = (e.type == HostKeyEvent::Type::KeyPressed);
-			return;
-		case XK_Control_L:
-		case XK_Control_R:
-			m_control_key = (e.type == HostKeyEvent::Type::KeyReleased);
-			return;
-	}
-#endif
-
-	if (m_dump_frames == 0)
-	{
-		// start dumping
-		if (m_shift_key)
-			m_dump_frames = m_control_key ? std::numeric_limits<u32>::max() : 1;
-	}
-	else
-	{
-		// stop dumping
-		if (m_dump && !m_control_key)
-			m_dump_frames = 0;
-	}
-
-	if (e.type == HostKeyEvent::Type::KeyPressed)
-	{
-
-		int step = m_shift_key ? -1 : 1;
-
-#if defined(__unix__)
-#define VK_F5 XK_F5
-#define VK_DELETE XK_Delete
-#define VK_NEXT XK_Next
-#elif defined(__APPLE__)
-#define VK_F5 kVK_F5
-#define VK_DELETE kVK_ForwardDelete
-#define VK_NEXT kVK_PageDown
-#endif
-
-		// NOTE: These are all BROKEN! They mess with GS thread state from the UI thread.
-
-		switch (e.key)
-		{
-			case VK_F5:
-				GSConfig.InterlaceMode = static_cast<GSInterlaceMode>((static_cast<int>(GSConfig.InterlaceMode) + static_cast<int>(GSInterlaceMode::Count) + step) % static_cast<int>(GSInterlaceMode::Count));
-				theApp.SetConfig("deinterlace_mode", static_cast<int>(GSConfig.InterlaceMode));
-				printf("GS: Set deinterlace mode to %d (%s).\n", static_cast<int>(GSConfig.InterlaceMode), theApp.m_gs_deinterlace.at(static_cast<int>(GSConfig.InterlaceMode)).name.c_str());
-				return;
-			case VK_NEXT: // As requested by Prafull, to be removed later
-				char dither_msg[3][16] = {"disabled", "auto", "auto unscaled"};
-				GSConfig.Dithering = (GSConfig.Dithering + 1) % 3;
-				printf("GS: Dithering is now %s.\n", dither_msg[GSConfig.Dithering]);
-				return;
-		}
-	}
-}
-
-#endif // PCSX2_CORE
 
 void GSRenderer::PurgePool()
 {

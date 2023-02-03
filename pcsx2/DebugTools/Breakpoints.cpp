@@ -29,6 +29,8 @@ u64 CBreakPoints::breakSkipFirstTicksIop_ = 0;
 std::vector<MemCheck> CBreakPoints::memChecks_;
 std::vector<MemCheck *> CBreakPoints::cleanupMemChecks_;
 bool CBreakPoints::breakpointTriggered_ = false;
+bool CBreakPoints::corePaused = false;
+std::function<void()> CBreakPoints::cb_bpUpdated_;
 
 // called from the dynarec
 u32 standardizeBreakpointAddress(u32 addr)
@@ -397,17 +399,12 @@ const std::vector<BreakPoint> CBreakPoints::GetBreakpoints()
 	return breakPoints_;
 }
 
-// including them earlier causes some ambiguities
-#ifndef PCSX2_CORE
-#include "gui/App.h"
-#include "gui/Debugger/DisassemblyDialog.h"
-#endif
-
 void CBreakPoints::Update(BreakPointCpu cpu, u32 addr)
 {
 	bool resume = false;
 	if (!r5900Debug.isCpuPaused())
 	{
+		corePaused = true; // This will be set to false in whatever handles the VM pause event
 		r5900Debug.pauseCpu();
 		resume = true;
 	}
@@ -420,9 +417,6 @@ void CBreakPoints::Update(BreakPointCpu cpu, u32 addr)
 	if (resume)
 		r5900Debug.resumeCpu();
 
-#ifndef PCSX2_CORE
-	auto disassembly_window = wxGetApp().GetDisassemblyPtr();
-	if (disassembly_window) // make sure that valid pointer is recieved to prevent potential NULL dereference.
-		disassembly_window->update();
-#endif
+	if(cb_bpUpdated_)
+		cb_bpUpdated_();
 }

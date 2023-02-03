@@ -20,6 +20,7 @@
 #include "newVif.h"
 #include "Gif_Unit.h"
 #include "SPU2/spu2.h"
+#include "USB/USB.h"
 
 #include "fmt/core.h"
 
@@ -78,7 +79,7 @@ void hwReset()
 	vif1Reset();
 	gif_fifo.init();
 	rcntInit();
-
+	USBreset();
 }
 
 __fi uint intcInterrupt()

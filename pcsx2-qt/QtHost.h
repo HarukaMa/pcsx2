@@ -112,6 +112,8 @@ public Q_SLOTS:
 	void enumerateVibrationMotors();
 	void runOnCPUThread(const std::function<void()>& func);
 	void queueSnapshot(quint32 gsdump_frames);
+	void beginCapture(const QString& path);
+	void endCapture();
 
 Q_SIGNALS:
 	bool messageConfirmed(const QString& title, const QString& message);
@@ -120,6 +122,7 @@ Q_SIGNALS:
 	DisplayWidget* onUpdateDisplayRequested(bool fullscreen, bool render_to_main, bool surfaceless);
 	void onResizeDisplayRequested(qint32 width, qint32 height);
 	void onDestroyDisplayRequested();
+	void onRelativeMouseModeRequested(bool enabled);
 
 	/// Called when the VM is starting initialization, but has not been completed yet.
 	void onVMStarting();

@@ -37,7 +37,6 @@ GSRendererHW::GSRendererHW()
 	m_mipmap = (GSConfig.HWMipmap >= HWMipmapLevel::Basic);
 	SetTCOffset();
 
-	m_dump_root = root_hw;
 	GSTextureReplacements::Initialize(m_tc);
 
 	// Hope nothing requires too many draw calls.
@@ -267,11 +266,11 @@ GSTexture* GSRendererHW::GetOutput(int i, int& y_offset)
 		}
 
 #ifdef ENABLE_OGL_DEBUG
-		if (s_dump)
+		if (GSConfig.DumpGSData)
 		{
-			if (s_savef && s_n >= s_saven)
+			if (GSConfig.SaveFrame && s_n >= GSConfig.SaveN)
 			{
-				t->Save(m_dump_root + StringUtil::StdStringFromFormat("%05d_f%lld_fr%d_%05x_%s.bmp", s_n, g_perfmon.GetFrame(), i, (int)TEX0.TBP0, psm_str(TEX0.PSM)));
+				t->Save(GetDrawDumpPath("%05d_f%lld_fr%d_%05x_%s.bmp", s_n, g_perfmon.GetFrame(), i, (int)TEX0.TBP0, psm_str(TEX0.PSM)));
 			}
 		}
 #endif
@@ -299,8 +298,8 @@ GSTexture* GSRendererHW::GetFeedbackOutput()
 	GSTexture* t = rt->m_texture;
 
 #ifdef ENABLE_OGL_DEBUG
-	if (s_dump && s_savef && s_n >= s_saven)
-		t->Save(m_dump_root + StringUtil::StdStringFromFormat("%05d_f%lld_fr%d_%05x_%s.bmp", s_n, g_perfmon.GetFrame(), 3, (int)TEX0.TBP0, psm_str(TEX0.PSM)));
+	if (GSConfig.DumpGSData && GSConfig.SaveFrame && s_n >= GSConfig.SaveN)
+		t->Save(GetDrawDumpPath("%05d_f%lld_fr%d_%05x_%s.bmp", s_n, g_perfmon.GetFrame(), 3, (int)TEX0.TBP0, psm_str(TEX0.PSM)));
 #endif
 
 	return t;
@@ -1278,19 +1277,19 @@ void GSRendererHW::RoundSpriteOffset()
 
 void GSRendererHW::Draw()
 {
-	if (s_dump && (s_n >= s_saven))
+	if (GSConfig.DumpGSData && (s_n >= GSConfig.SaveN))
 	{
 		std::string s;
 
 		// Dump Register state
-		s = StringUtil::StdStringFromFormat("%05d_context.txt", s_n);
+		s = GetDrawDumpPath("%05d_context.txt", s_n);
 
-		m_env.Dump(m_dump_root + s);
-		m_context->Dump(m_dump_root + s);
+		m_env.Dump(s);
+		m_context->Dump(s);
 
 		// Dump vertices
-		s = StringUtil::StdStringFromFormat("%05d_vertex.txt", s_n);
-		DumpVertices(m_dump_root + s);
+		s = GetDrawDumpPath("%05d_vertex.txt", s_n);
+		DumpVertices(s);
 	}
 
 	if (IsBadFrame())
@@ -1457,7 +1456,8 @@ void GSRendererHW::Draw()
 	m_texture_shuffle = false;
 	m_tex_is_fb = false;
 
-	if (PRIM->TME)
+	// Disable texture mapping if the blend is black and using alpha from vertex.
+	if (PRIM->TME && !(PRIM->ABE && m_context->ALPHA.IsBlack() && !m_context->TEX0.TCC))
 	{
 		GIFRegCLAMP MIP_CLAMP = context->CLAMP;
 		GSVector2i hash_lod_range(0, 0);
@@ -1694,29 +1694,40 @@ void GSRendererHW::Draw()
 	{
 		// Constant Direct Write without texture/test/blending (aka a GS mem clear)
 		if ((m_vt.m_primclass == GS_SPRITE_CLASS) && !PRIM->TME // Direct write
-			&& (!PRIM->ABE || m_context->ALPHA.IsOpaque()) // No transparency
+			&& (!PRIM->ABE || IsOpaque()) // No transparency
 			&& (m_context->FRAME.FBMSK == 0) // no color mask
 			&& !m_context->TEST.ATE // no alpha test
 			&& (!m_context->TEST.ZTE || m_context->TEST.ZTST == ZTST_ALWAYS) // no depth test
 			&& (m_vt.m_eq.rgba == 0xFFFF) // constant color write
 			&& m_r.x == 0 && m_r.y == 0) // Likely full buffer write
 		{
-
-			if (OI_GsMemClear() && m_r.w > 1024)
+			// Likely doing a huge single page width clear, which never goes well. (Superman)
+			// Burnout 3 does a 32x1024 double width clear on its reflection targets.
+			const bool clear_height_valid = (m_r.w >= 1024);
+			if (clear_height_valid && context->FRAME.FBW == 1)
 			{
-				if ((fm & fm_mask) != fm_mask)
-				{
-					m_tc->InvalidateVideoMem(context->offset.fb, m_r, false, true);
+				m_r.w = GetFramebufferHeight();
+				m_r.z = GetFramebufferWidth();
+				context->FRAME.FBW = (m_r.z + 63) / 64;
+			}
 
-					m_tc->InvalidateVideoMemType(GSTextureCache::RenderTarget, context->FRAME.Block());
-				}
+			// Superman does a clear to white, not black, on its depth buffer.
+			// Since we don't preload depth, OI_GsMemClear() won't work here, since we invalidate the target later
+			// on. So, instead, let the draw go through with the expanded rectangle, and copy color->depth.
+			const bool is_zero_clear = (((GSLocalMemory::m_psm[m_context->FRAME.PSM].fmt == 0) ?
+												m_vertex.buff[1].RGBAQ.U32[0] :
+                                                (m_vertex.buff[1].RGBAQ.U32[0] & ~0xFF000000)) == 0);
+			if (is_zero_clear && OI_GsMemClear() && clear_height_valid)
+			{
+				m_tc->InvalidateVideoMem(context->offset.fb, m_r, false, true);
+				m_tc->InvalidateVideoMemType(GSTextureCache::RenderTarget, context->FRAME.Block());
 
-				if (zm != 0xffffffff)
+				if (m_context->ZBUF.ZMSK == 0)
 				{
 					m_tc->InvalidateVideoMem(context->offset.zb, m_r, false, false);
-
 					m_tc->InvalidateVideoMemType(GSTextureCache::DepthStencil, context->ZBUF.Block());
 				}
+
 				return;
 			}
 		}
@@ -1778,44 +1789,44 @@ void GSRendererHW::Draw()
 		m_src->m_texture = *m_src->m_from_target;
 	}
 
-	if (s_dump)
+	if (GSConfig.DumpGSData)
 	{
 		const u64 frame = g_perfmon.GetFrame();
 
 		std::string s;
 
-		if (s_savet && s_n >= s_saven && m_src)
+		if (GSConfig.SaveTexture && s_n >= GSConfig.SaveN && m_src)
 		{
-			s = StringUtil::StdStringFromFormat("%05d_f%lld_itex_%05x_%s_%d%d_%02x_%02x_%02x_%02x.dds",
+			s = GetDrawDumpPath("%05d_f%lld_itex_%05x_%s_%d%d_%02x_%02x_%02x_%02x.dds",
 				s_n, frame, (int)context->TEX0.TBP0, psm_str(context->TEX0.PSM),
 				(int)context->CLAMP.WMS, (int)context->CLAMP.WMT,
 				(int)context->CLAMP.MINU, (int)context->CLAMP.MAXU,
 				(int)context->CLAMP.MINV, (int)context->CLAMP.MAXV);
 
-			m_src->m_texture->Save(m_dump_root + s);
+			m_src->m_texture->Save(s);
 
 			if (m_src->m_palette)
 			{
-				s = StringUtil::StdStringFromFormat("%05d_f%lld_itpx_%05x_%s.dds", s_n, frame, context->TEX0.CBP, psm_str(context->TEX0.CPSM));
+				s = GetDrawDumpPath("%05d_f%lld_itpx_%05x_%s.dds", s_n, frame, context->TEX0.CBP, psm_str(context->TEX0.CPSM));
 
-				m_src->m_palette->Save(m_dump_root + s);
+				m_src->m_palette->Save(s);
 			}
 		}
 
-		if (rt && s_save && s_n >= s_saven)
+		if (rt && GSConfig.SaveRT && s_n >= GSConfig.SaveN)
 		{
-			s = StringUtil::StdStringFromFormat("%05d_f%lld_rt0_%05x_%s.bmp", s_n, frame, context->FRAME.Block(), psm_str(context->FRAME.PSM));
+			s = GetDrawDumpPath("%05d_f%lld_rt0_%05x_%s.bmp", s_n, frame, context->FRAME.Block(), psm_str(context->FRAME.PSM));
 
 			if (rt->m_texture)
-				rt->m_texture->Save(m_dump_root + s);
+				rt->m_texture->Save(s);
 		}
 
-		if (ds && s_savez && s_n >= s_saven)
+		if (ds && GSConfig.SaveDepth && s_n >= GSConfig.SaveN)
 		{
-			s = StringUtil::StdStringFromFormat("%05d_f%lld_rz0_%05x_%s.bmp", s_n, frame, context->ZBUF.Block(), psm_str(context->ZBUF.PSM));
+			s = GetDrawDumpPath("%05d_f%lld_rz0_%05x_%s.bmp", s_n, frame, context->ZBUF.Block(), psm_str(context->ZBUF.PSM));
 
 			if (ds->m_texture)
-				ds->m_texture->Save(m_dump_root + s);
+				ds->m_texture->Save(s);
 		}
 	}
 
@@ -1835,7 +1846,7 @@ void GSRendererHW::Draw()
 	{
 		// Constant Direct Write without texture/test/blending (aka a GS mem clear)
 		if ((m_vt.m_primclass == GS_SPRITE_CLASS) && !PRIM->TME // Direct write
-				&& (!PRIM->ABE || m_context->ALPHA.IsOpaque()) // No transparency
+				&& (!PRIM->ABE || IsOpaque()) // No transparency
 				&& (m_context->FRAME.FBMSK == 0) // no color mask
 				&& !m_context->TEST.ATE // no alpha test
 				&& (!m_context->TEST.ZTE || m_context->TEST.ZTST == ZTST_ALWAYS) // no depth test
@@ -1939,31 +1950,31 @@ void GSRendererHW::Draw()
 		(this->*m_hacks.m_oo)();
 	}
 
-	if (s_dump)
+	if (GSConfig.DumpGSData)
 	{
 		const u64 frame = g_perfmon.GetFrame();
 
 		std::string s;
 
-		if (s_save && s_n >= s_saven)
+		if (GSConfig.SaveRT && s_n >= GSConfig.SaveN)
 		{
-			s = StringUtil::StdStringFromFormat("%05d_f%lld_rt1_%05x_%s.bmp", s_n, frame, context->FRAME.Block(), psm_str(context->FRAME.PSM));
+			s = GetDrawDumpPath("%05d_f%lld_rt1_%05x_%s.bmp", s_n, frame, context->FRAME.Block(), psm_str(context->FRAME.PSM));
 
 			if (rt)
-				rt->m_texture->Save(m_dump_root + s);
+				rt->m_texture->Save(s);
 		}
 
-		if (s_savez && s_n >= s_saven)
+		if (GSConfig.SaveDepth && s_n >= GSConfig.SaveN)
 		{
-			s = StringUtil::StdStringFromFormat("%05d_f%lld_rz1_%05x_%s.bmp", s_n, frame, context->ZBUF.Block(), psm_str(context->ZBUF.PSM));
+			s = GetDrawDumpPath("%05d_f%lld_rz1_%05x_%s.bmp", s_n, frame, context->ZBUF.Block(), psm_str(context->ZBUF.PSM));
 
 			if (ds)
-				rt->m_texture->Save(m_dump_root + s);
+				rt->m_texture->Save(s);
 		}
 
-		if (s_savel > 0 && (s_n - s_saven) > s_savel)
+		if (GSConfig.SaveL > 0 && (s_n - GSConfig.SaveN) > GSConfig.SaveL)
 		{
-			s_dump = 0;
+			GSConfig.DumpGSData = 0;
 		}
 	}
 
@@ -3617,7 +3628,7 @@ void GSRendererHW::DrawPrims(GSTexture* rt, GSTexture* ds, GSTextureCache::Sourc
 	// Blend
 
 	bool blending_alpha_pass = false;
-	if (!IsOpaque() && rt && m_conf.colormask.wrgba != 0)
+	if ((!IsOpaque() || m_context->ALPHA.IsBlack()) && rt && (m_conf.colormask.wrgba & 0x7))
 	{
 		EmulateBlending(DATE_PRIMID, DATE_BARRIER, blending_alpha_pass);
 	}
@@ -4133,7 +4144,6 @@ GSRendererHW::Hacks::Hacks()
 	m_oi_list.push_back(HackEntry<OI_Ptr>(CRC::MetalSlug6, CRC::RegionCount, &GSRendererHW::OI_MetalSlug6));
 	m_oi_list.push_back(HackEntry<OI_Ptr>(CRC::RozenMaidenGebetGarden, CRC::RegionCount, &GSRendererHW::OI_RozenMaidenGebetGarden));
 	m_oi_list.push_back(HackEntry<OI_Ptr>(CRC::SonicUnleashed, CRC::RegionCount, &GSRendererHW::OI_SonicUnleashed));
-	m_oi_list.push_back(HackEntry<OI_Ptr>(CRC::SuperManReturns, CRC::RegionCount, &GSRendererHW::OI_SuperManReturns));
 	m_oi_list.push_back(HackEntry<OI_Ptr>(CRC::ArTonelico2, CRC::RegionCount, &GSRendererHW::OI_ArTonelico2));
 	m_oi_list.push_back(HackEntry<OI_Ptr>(CRC::Jak2, CRC::RegionCount, &GSRendererHW::OI_JakGames));
 	m_oi_list.push_back(HackEntry<OI_Ptr>(CRC::Jak3, CRC::RegionCount, &GSRendererHW::OI_JakGames));
@@ -4204,7 +4214,11 @@ void GSRendererHW::OI_DoubleHalfClear(GSTextureCache::Target*& rt, GSTextureCach
 		// If both buffers are side by side we can expect a fast clear in on-going
 		if (half <= (base + written_pages))
 		{
-			const u32 color = v[1].RGBAQ.U32[0];
+			// Take the vertex colour, but check if the blending would make it black.
+			u32 vert_color = v[1].RGBAQ.U32[0];
+			if (PRIM->ABE && m_context->ALPHA.IsBlack())
+				vert_color &= ~0xFF000000;
+			const u32 color = vert_color;
 			const bool clear_depth = (m_context->FRAME.FBP > m_context->ZBUF.ZBP);
 
 			GL_INS("OI_DoubleHalfClear:%s: base %x half %x. w_pages %d h_pages %d fbw %d. Color %x",
@@ -4244,7 +4258,7 @@ void GSRendererHW::OI_DoubleHalfClear(GSTextureCache::Target*& rt, GSTextureCach
 	}
 	// Striped double clear done by Powerdrome and Snoopy Vs Red Baron, it will clear in 32 pixel stripes half done by the Z and half done by the FRAME
 	else if (rt && !ds && m_context->FRAME.FBP == m_context->ZBUF.ZBP && (m_context->FRAME.PSM & 0x30) != (m_context->ZBUF.PSM & 0x30)
-			&& (m_context->FRAME.PSM & 0xF) == (m_context->ZBUF.PSM & 0xF) && (u32)(GSVector4i(m_vt.m_max.p).z) == 0)
+			&& (m_context->FRAME.PSM & 0xF) == (m_context->ZBUF.PSM & 0xF) && m_vt.m_eq.z == 1)
 	{
 		const GSVertex* v = &m_vertex.buff[0];
 
@@ -4264,21 +4278,32 @@ bool GSRendererHW::OI_GsMemClear()
 	// Note gs mem clear must be tested before calling this function
 
 	// Striped double clear done by Powerdrome and Snoopy Vs Red Baron, it will clear in 32 pixel stripes half done by the Z and half done by the FRAME
-	const bool ZisFrame = m_context->FRAME.FBP == m_context->ZBUF.ZBP && (m_context->FRAME.PSM & 0x30) != (m_context->ZBUF.PSM & 0x30)
-							&& (m_context->FRAME.PSM & 0xF) == (m_context->ZBUF.PSM & 0xF) && (u32)(GSVector4i(m_vt.m_max.p).z) == 0;
+	const bool ZisFrame = m_context->FRAME.FBP == m_context->ZBUF.ZBP && !m_context->ZBUF.ZMSK && (m_context->FRAME.PSM & 0x30) != (m_context->ZBUF.PSM & 0x30)
+							&& (m_context->FRAME.PSM & 0xF) == (m_context->ZBUF.PSM & 0xF) && m_vt.m_eq.z == 1 && m_vertex.buff[1].XYZ.Z == m_vertex.buff[1].RGBAQ.U32[0];
 
 	// Limit it further to a full screen 0 write
-	if (((m_vertex.next == 2) || ZisFrame) && m_vt.m_min.c.eq(GSVector4i(0)))
+	if (((m_vertex.next == 2) || ZisFrame) && m_vt.m_eq.rgba == 0xFFFF)
 	{
 		const GSOffset& off = m_context->offset.fb;
-		const GSVector4i r = GSVector4i(m_vt.m_min.p.xyxy(m_vt.m_max.p)).rintersect(GSVector4i(m_context->scissor.in));
-		// Limit the hack to a single fullscreen clear. Some games might use severals column to clear a screen
+		GSVector4i r = GSVector4i(m_vt.m_min.p.xyxy(m_vt.m_max.p)).rintersect(GSVector4i(m_context->scissor.in));
+
+		
+		if (r.width() == 32 && ZisFrame)
+			r.z += 32;
+		// Limit the hack to a single full buffer clear. Some games might use severals column to clear a screen
 		// but hopefully it will be enough.
-		if (r.width() <= 128 || r.height() <= 128)
+		if (m_r.width() < ((static_cast<int>(m_context->FRAME.FBW) - 1) * 64) || r.height() <= 128)
 			return false;
 
 		GL_INS("OI_GsMemClear (%d,%d => %d,%d)", r.x, r.y, r.z, r.w);
 		const int format = GSLocalMemory::m_psm[m_context->FRAME.PSM].fmt;
+
+		// Take the vertex colour, but check if the blending would make it black.
+		u32 vert_color = m_vertex.buff[1].RGBAQ.U32[0];
+		if (PRIM->ABE && m_context->ALPHA.IsBlack())
+			vert_color &= ~0xFF000000;
+
+		const u32 color = (format == 0) ? vert_color : (vert_color & ~0xFF000000);
 
 		// FIXME: loop can likely be optimized with AVX/SSE. Pixels aren't
 		// linear but the value will be done for all pixels of a block.
@@ -4292,7 +4317,7 @@ bool GSRendererHW::OI_GsMemClear()
 
 				for (int x = r.left; x < r.right; x++)
 				{
-					*pa.value(x) = 0; // Here the constant color
+					*pa.value(x) = color; // Here the constant color
 				}
 			}
 		}
@@ -4306,6 +4331,7 @@ bool GSRendererHW::OI_GsMemClear()
 				for (int x = r.left; x < r.right; x++)
 				{
 					*pa.value(x) &= 0xff000000; // Clear the color
+					*pa.value(x) |= color; // OR in our constant
 				}
 			}
 		}
@@ -4700,32 +4726,6 @@ bool GSRendererHW::OI_PointListPalette(GSTexture* rt, GSTexture* ds, GSTextureCa
 		return false;
 	}
 	return true;
-}
-
-bool GSRendererHW::OI_SuperManReturns(GSTexture* rt, GSTexture* ds, GSTextureCache::Source* t)
-{
-	// Instead to use a fullscreen rectangle they use a 32 pixels, 4096 pixels with a FBW of 1.
-	// Technically the FB wrap/overlap on itself...
-	const GSDrawingContext* ctx = m_context;
-#ifndef NDEBUG
-	GSVertex* v = &m_vertex.buff[0];
-#endif
-
-	if (!(ctx->FRAME.FBP == ctx->ZBUF.ZBP && !PRIM->TME && !ctx->ZBUF.ZMSK && !ctx->FRAME.FBMSK && m_vt.m_eq.rgba == 0xFFFF))
-		return true;
-
-	// Please kill those crazy devs!
-	ASSERT(m_vertex.next == 2);
-	ASSERT(m_vt.m_primclass == GS_SPRITE_CLASS);
-	ASSERT((v->RGBAQ.A << 24 | v->RGBAQ.B << 16 | v->RGBAQ.G << 8 | v->RGBAQ.R) == (int)v->XYZ.Z);
-
-	// Do a direct write
-	g_gs_device->ClearRenderTarget(rt, GSVector4(m_vt.m_min.c));
-
-	m_tc->InvalidateVideoMemType(GSTextureCache::DepthStencil, ctx->FRAME.Block());
-	GL_INS("OI_SuperManReturns");
-
-	return false;
 }
 
 bool GSRendererHW::OI_ArTonelico2(GSTexture* rt, GSTexture* ds, GSTextureCache::Source* t)

@@ -507,10 +507,19 @@ void GSDevice::SetHWDrawConfigForAlphaPass(GSHWDrawConfig::PSSelector* ps,
 	}
 }
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#endif
+
 // Kinda grotty, but better than copy/pasting the relevant bits in..
 #define A_CPU 1
 #include "bin/resources/shaders/common/ffx_a.h"
 #include "bin/resources/shaders/common/ffx_cas.h"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 bool GSDevice::GetCASShaderSource(std::string* source)
 {
@@ -562,34 +571,6 @@ void GSDevice::CAS(GSTexture*& tex, GSVector4i& src_rect, GSVector4& src_uv, con
 	src_rect = GSVector4i(0, 0, dst_width, dst_height);
 	src_uv = GSVector4(0.0f, 0.0f, 1.0f, 1.0f);
 }
-
-GSAdapter::operator std::string() const
-{
-	char buf[sizeof "12345678:12345678:12345678:12345678"];
-	sprintf(buf, "%.4X:%.4X:%.8X:%.2X", vendor, device, subsys, rev);
-	return buf;
-}
-
-bool GSAdapter::operator==(const GSAdapter& desc_dxgi) const
-{
-	return vendor == desc_dxgi.vendor
-		&& device == desc_dxgi.device
-		&& subsys == desc_dxgi.subsys
-		&& rev == desc_dxgi.rev;
-}
-
-#ifdef _WIN32
-GSAdapter::GSAdapter(const DXGI_ADAPTER_DESC1& desc_dxgi)
-	: vendor(desc_dxgi.VendorId)
-	, device(desc_dxgi.DeviceId)
-	, subsys(desc_dxgi.SubSysId)
-	, rev(desc_dxgi.Revision)
-{
-}
-#endif
-#ifdef __linux__
-// TODO
-#endif
 
 // clang-format off
 

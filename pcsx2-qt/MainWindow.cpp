@@ -32,6 +32,7 @@
 #include "pcsx2/CDVD/CDVDdiscReader.h"
 #include "pcsx2/Frontend/GameList.h"
 #include "pcsx2/Frontend/LogSink.h"
+#include "pcsx2/GS/GS.h"
 #include "pcsx2/GSDumpReplayer.h"
 #include "pcsx2/HostDisplay.h"
 #include "pcsx2/HostSettings.h"
@@ -123,6 +124,9 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow()
 {
+	// make sure the game list isn't refreshing, because it's on a separate thread
+	cancelGameListRefresh();
+
 	// we compare here, since recreate destroys the window later
 	if (g_main_window == this)
 		g_main_window = nullptr;
@@ -380,6 +384,7 @@ void MainWindow::connectSignals()
 	connect(m_ui.actionSaveBlockDump, &QAction::toggled, this, &MainWindow::onBlockDumpActionToggled);
 	connect(m_ui.actionShowAdvancedSettings, &QAction::toggled, this, &MainWindow::onShowAdvancedSettingsToggled);
 	connect(m_ui.actionSaveGSDump, &QAction::triggered, this, &MainWindow::onSaveGSDumpActionTriggered);
+	connect(m_ui.actionToolsVideoCapture, &QAction::toggled, this, &MainWindow::onToolsVideoCaptureToggled);
 
 	// Input Recording
 	connect(m_ui.actionInputRecNew, &QAction::triggered, this, &MainWindow::onInputRecNewActionTriggered);
@@ -409,6 +414,7 @@ void MainWindow::connectVMThreadSignals(EmuThread* thread)
 	connect(thread, &EmuThread::onUpdateDisplayRequested, this, &MainWindow::updateDisplay, Qt::BlockingQueuedConnection);
 	connect(thread, &EmuThread::onDestroyDisplayRequested, this, &MainWindow::destroyDisplay, Qt::BlockingQueuedConnection);
 	connect(thread, &EmuThread::onResizeDisplayRequested, this, &MainWindow::displayResizeRequested);
+	connect(thread, &EmuThread::onRelativeMouseModeRequested, this, &MainWindow::relativeMouseModeRequested);
 	connect(thread, &EmuThread::onVMStarting, this, &MainWindow::onVMStarting);
 	connect(thread, &EmuThread::onVMStarted, this, &MainWindow::onVMStarted);
 	connect(thread, &EmuThread::onVMPaused, this, &MainWindow::onVMPaused);
@@ -420,6 +426,7 @@ void MainWindow::connectVMThreadSignals(EmuThread* thread)
 	connect(m_ui.actionPause, &QAction::toggled, thread, &EmuThread::setVMPaused);
 	connect(m_ui.actionFullscreen, &QAction::triggered, thread, &EmuThread::toggleFullscreen);
 	connect(m_ui.actionToggleSoftwareRendering, &QAction::triggered, thread, &EmuThread::toggleSoftwareRendering);
+	connect(m_ui.actionDebugger, &QAction::triggered, this, &MainWindow::openDebugger);
 	connect(m_ui.actionReloadPatches, &QAction::triggered, thread, &EmuThread::reloadPatches);
 
 	static constexpr GSRendererType renderers[] = {
@@ -873,6 +880,33 @@ void MainWindow::onShowAdvancedSettingsToggled(bool checked)
 		recreateSettings();
 }
 
+void MainWindow::onToolsVideoCaptureToggled(bool checked)
+{
+	if (!s_vm_valid)
+		return;
+
+	if (!checked)
+	{
+		g_emu_thread->endCapture();
+		return;
+	}
+
+	const QString container(QString::fromStdString(
+		Host::GetStringSettingValue("EmuCore/GS", "VideoCaptureContainer", Pcsx2Config::GSOptions::DEFAULT_VIDEO_CAPTURE_CONTAINER)));
+	const QString filter(tr("%1 Files (*.%2)").arg(container.toUpper()).arg(container));
+
+	QString path(QStringLiteral("%1.%2").arg(QString::fromStdString(GSGetBaseSnapshotFilename())).arg(container));
+	path = QFileDialog::getSaveFileName(this, tr("Video Capture"), path, filter);
+	if (path.isEmpty())
+	{
+		QSignalBlocker sb(m_ui.actionToolsVideoCapture);
+		m_ui.actionToolsVideoCapture->setChecked(false);
+		return;
+	}
+
+	g_emu_thread->beginCapture(path);
+}
+
 void MainWindow::saveStateToConfig()
 {
 	if (!isVisible())
@@ -947,6 +981,10 @@ void MainWindow::updateEmulationActions(bool starting, bool running)
 	m_ui.menuSaveState->setEnabled(running);
 
 	m_ui.actionViewGameProperties->setEnabled(running);
+
+	m_ui.actionToolsVideoCapture->setEnabled(running);
+	if (!running && m_ui.actionToolsVideoCapture->isChecked())
+		m_ui.actionToolsVideoCapture->setChecked(false);
 
 	m_game_list_widget->setDisabled(starting && !running);
 
@@ -1089,7 +1127,7 @@ bool MainWindow::isRenderingToMain() const
 
 bool MainWindow::shouldHideMouseCursor() const
 {
-	return isRenderingFullscreen() && Host::GetBoolSettingValue("UI", "HideMouseCursor", false);
+	return (isRenderingFullscreen() && Host::GetBoolSettingValue("UI", "HideMouseCursor", false)) || m_relative_mouse_mode;
 }
 
 bool MainWindow::shouldHideMainWindow() const
@@ -1250,7 +1288,7 @@ void MainWindow::requestExit()
 void MainWindow::checkForSettingChanges()
 {
 	if (m_display_widget)
-		m_display_widget->updateRelativeMode(s_vm_valid && !s_vm_paused);
+		updateDisplayWidgetCursor();
 
 	updateWindowState();
 }
@@ -1802,10 +1840,7 @@ void MainWindow::onVMPaused()
 	m_last_fps_status = m_status_verbose_widget->text();
 	m_status_verbose_widget->setText(tr("Paused"));
 	if (m_display_widget)
-	{
-		m_display_widget->updateRelativeMode(false);
-		m_display_widget->updateCursor(false);
-	}
+		updateDisplayWidgetCursor();
 }
 
 void MainWindow::onVMResumed()
@@ -1824,8 +1859,7 @@ void MainWindow::onVMResumed()
 	m_last_fps_status = QString();
 	if (m_display_widget)
 	{
-		m_display_widget->updateRelativeMode(true);
-		m_display_widget->updateCursor(true);
+		updateDisplayWidgetCursor();
 		m_display_widget->setFocus();
 	}
 }
@@ -1842,14 +1876,9 @@ void MainWindow::onVMStopped()
 	updateInputRecordingActions(false);
 
 	if (m_display_widget)
-	{
-		m_display_widget->updateRelativeMode(false);
-		m_display_widget->updateCursor(false);
-	}
+		updateDisplayWidgetCursor();
 	else
-	{
 		switchToGameListView();
-	}
 
 	// reload played time
 	if (m_game_list_widget->isShowingGameList())
@@ -2035,9 +2064,7 @@ DisplayWidget* MainWindow::createDisplay(bool fullscreen, bool render_to_main)
 	m_ui.actionStartFullscreenUI->setEnabled(false);
 	m_ui.actionStartFullscreenUI2->setEnabled(false);
 
-	m_display_widget->setShouldHideCursor(shouldHideMouseCursor());
-	m_display_widget->updateRelativeMode(s_vm_valid && !s_vm_paused);
-	m_display_widget->updateCursor(s_vm_valid && !s_vm_paused);
+	updateDisplayWidgetCursor();
 	m_display_widget->setFocus();
 
 	g_host_display->DoneCurrent();
@@ -2083,10 +2110,8 @@ DisplayWidget* MainWindow::updateDisplay(bool fullscreen, bool render_to_main, b
 			container->showNormal();
 		}
 
+		updateDisplayWidgetCursor();
 		m_display_widget->setFocus();
-		m_display_widget->setShouldHideCursor(shouldHideMouseCursor());
-		m_display_widget->updateRelativeMode(s_vm_valid && !s_vm_paused);
-		m_display_widget->updateCursor(s_vm_valid && !s_vm_paused);
 		updateWindowState();
 
 		QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
@@ -2122,10 +2147,8 @@ DisplayWidget* MainWindow::updateDisplay(bool fullscreen, bool render_to_main, b
 	updateWindowTitle();
 	updateWindowState();
 
+	updateDisplayWidgetCursor();
 	m_display_widget->setFocus();
-	m_display_widget->setShouldHideCursor(shouldHideMouseCursor());
-	m_display_widget->updateRelativeMode(s_vm_valid && !s_vm_paused);
-	m_display_widget->updateCursor(s_vm_valid && !s_vm_paused);
 
 	return m_display_widget;
 }
@@ -2221,6 +2244,16 @@ void MainWindow::displayResizeRequested(qint32 width, qint32 height)
 	QtUtils::ResizePotentiallyFixedSizeWindow(this, width, height + extra_height);
 }
 
+void MainWindow::relativeMouseModeRequested(bool enabled)
+{
+	if (m_relative_mouse_mode == enabled)
+		return;
+
+	m_relative_mouse_mode = enabled;
+	if (s_vm_valid && !s_vm_paused)
+		updateDisplayWidgetCursor();
+}
+
 void MainWindow::destroyDisplay()
 {
 	// Now we can safely destroy the display window.
@@ -2282,6 +2315,12 @@ void MainWindow::destroyDisplayWidget(bool show_game_list)
 	}
 
 	updateDisplayRelatedActions(false, false, false);
+}
+
+void MainWindow::updateDisplayWidgetCursor()
+{
+	m_display_widget->updateRelativeMode(s_vm_valid && !s_vm_paused && m_relative_mouse_mode);
+	m_display_widget->updateCursor(s_vm_valid && !s_vm_paused && shouldHideMouseCursor());
 }
 
 void MainWindow::focusDisplayWidget()
@@ -2374,6 +2413,20 @@ void MainWindow::doSettings(const char* category /* = nullptr */)
 
 	if (category)
 		dlg->setCategory(category);
+}
+
+DebuggerWindow* MainWindow::getDebuggerWindow()
+{
+	if (!m_debugger_window)
+		m_debugger_window = new DebuggerWindow(this);
+
+	return m_debugger_window;
+}
+
+void MainWindow::openDebugger()
+{
+	DebuggerWindow* dwnd = getDebuggerWindow();
+	dwnd->isVisible() ? dwnd->hide() : dwnd->show();
 }
 
 ControllerSettingsDialog* MainWindow::getControllerSettingsDialog()

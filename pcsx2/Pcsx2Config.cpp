@@ -25,11 +25,63 @@
 #include "HostDisplay.h"
 #include "CDVD/CDVDcommon.h"
 #include "MemoryCardFile.h"
+#include "USB/USB.h"
 
-#ifndef PCSX2_CORE
-#include "gui/AppConfig.h"
-#include "GS/GS.h"
-#endif
+const char* SettingInfo::StringDefaultValue() const
+{
+	return default_value ? default_value : "";
+}
+
+bool SettingInfo::BooleanDefaultValue() const
+{
+	return default_value ? StringUtil::FromChars<bool>(default_value).value_or(false) : false;
+}
+
+s32 SettingInfo::IntegerDefaultValue() const
+{
+	return default_value ? StringUtil::FromChars<s32>(default_value).value_or(0) : 0;
+}
+
+s32 SettingInfo::IntegerMinValue() const
+{
+	static constexpr s32 fallback_value = std::numeric_limits<s32>::min();
+	return min_value ? StringUtil::FromChars<s32>(min_value).value_or(fallback_value) : fallback_value;
+}
+
+s32 SettingInfo::IntegerMaxValue() const
+{
+	static constexpr s32 fallback_value = std::numeric_limits<s32>::max();
+	return max_value ? StringUtil::FromChars<s32>(max_value).value_or(fallback_value) : fallback_value;
+}
+
+s32 SettingInfo::IntegerStepValue() const
+{
+	static constexpr s32 fallback_value = 1;
+	return step_value ? StringUtil::FromChars<s32>(step_value).value_or(fallback_value) : fallback_value;
+}
+
+float SettingInfo::FloatDefaultValue() const
+{
+	return default_value ? StringUtil::FromChars<float>(default_value).value_or(0.0f) : 0.0f;
+}
+
+float SettingInfo::FloatMinValue() const
+{
+	static constexpr float fallback_value = std::numeric_limits<float>::min();
+	return min_value ? StringUtil::FromChars<float>(min_value).value_or(fallback_value) : fallback_value;
+}
+
+float SettingInfo::FloatMaxValue() const
+{
+	static constexpr float fallback_value = std::numeric_limits<float>::max();
+	return max_value ? StringUtil::FromChars<float>(max_value).value_or(fallback_value) : fallback_value;
+}
+
+float SettingInfo::FloatStepValue() const
+{
+	static constexpr float fallback_value = 0.1f;
+	return step_value ? StringUtil::FromChars<float>(step_value).value_or(fallback_value) : fallback_value;
+}
 
 namespace EmuFolders
 {
@@ -278,6 +330,13 @@ const char* Pcsx2Config::GSOptions::FMVAspectRatioSwitchNames[] = {
 	"16:9",
 	nullptr};
 
+const char* Pcsx2Config::GSOptions::VideoCaptureContainers[] = {
+	"mp4",
+	"mkv",
+	"avi",
+	nullptr};
+const char* Pcsx2Config::GSOptions::DEFAULT_VIDEO_CAPTURE_CONTAINER = "mp4";
+
 const char* Pcsx2Config::GSOptions::GetRendererName(GSRendererType type)
 {
 	switch (type)
@@ -423,6 +482,7 @@ bool Pcsx2Config::GSOptions::OptionsAreEqual(const GSOptions& right) const
 		OpEqu(ShadeBoost_Brightness) &&
 		OpEqu(ShadeBoost_Contrast) &&
 		OpEqu(ShadeBoost_Saturation) &&
+		OpEqu(PNGCompressionLevel) &&
 		OpEqu(SaveN) &&
 		OpEqu(SaveL) &&
 
@@ -430,7 +490,14 @@ bool Pcsx2Config::GSOptions::OptionsAreEqual(const GSOptions& right) const
 		OpEqu(ScreenshotFormat) &&
 		OpEqu(ScreenshotQuality) &&
 
-		OpEqu(Adapter));
+		OpEqu(VideoCaptureContainer) &&
+		OpEqu(VideoCaptureCodec) &&
+		OpEqu(VideoCaptureBitrate) &&
+
+		OpEqu(Adapter) &&
+		
+		OpEqu(HWDumpDirectory) &&
+		OpEqu(SWDumpDirectory));
 }
 
 bool Pcsx2Config::GSOptions::operator!=(const GSOptions& right) const
@@ -468,8 +535,6 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapEntry(FramerateNTSC);
 	SettingsWrapEntry(FrameratePAL);
 
-#ifdef PCSX2_CORE
-	// These are loaded from GSWindow in wx.
 	SettingsWrapBitBool(SyncToHostRefreshRate);
 	SettingsWrapEnumEx(AspectRatio, "AspectRatio", AspectRatioNames);
 	SettingsWrapEnumEx(FMVAspectRatioSwitch, "FMVAspectRatioSwitch", FMVAspectRatioSwitchNames);
@@ -481,20 +546,6 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapEntryEx(Crop[1], "CropTop");
 	SettingsWrapEntryEx(Crop[2], "CropRight");
 	SettingsWrapEntryEx(Crop[3], "CropBottom");
-#endif
-
-#ifndef PCSX2_CORE
-	if (wrap.IsLoading())
-		ReloadIniSettings();
-#else
-	LoadSaveIniSettings(wrap);
-#endif
-}
-
-#ifdef PCSX2_CORE
-void Pcsx2Config::GSOptions::LoadSaveIniSettings(SettingsWrapper& wrap)
-{
-	SettingsWrapSection("EmuCore/GS");
 
 #define GSSettingInt(var) SettingsWrapBitfield(var)
 #define GSSettingIntEx(var, name) SettingsWrapBitfieldEx(var, name)
@@ -505,22 +556,6 @@ void Pcsx2Config::GSOptions::LoadSaveIniSettings(SettingsWrapper& wrap)
 #define GSSettingIntEnumEx(var, name) SettingsWrapIntEnumEx(var, name)
 #define GSSettingString(var) SettingsWrapEntry(var)
 #define GSSettingStringEx(var, name) SettingsWrapEntryEx(var, name)
-#else
-void Pcsx2Config::GSOptions::ReloadIniSettings()
-{
-	// ensure theApp is loaded.
-	GSinitConfig();
-
-#define GSSettingInt(var) var = theApp.GetConfigI(#var)
-#define GSSettingIntEx(var, name) var = theApp.GetConfigI(name)
-#define GSSettingBool(var) var = theApp.GetConfigB(#var)
-#define GSSettingBoolEx(var, name) var = theApp.GetConfigB(name)
-#define GSSettingFloat(var) var = static_cast<float>(theApp.GetConfigI(#var))
-#define GSSettingFloatEx(var, name) var = static_cast<float>(theApp.GetConfigI(name))
-#define GSSettingIntEnumEx(var, name) var = static_cast<decltype(var)>(theApp.GetConfigI(name))
-#define GSSettingString(var) var = theApp.GetConfigS(#var)
-#define GSSettingStringEx(var, name) var = theApp.GetConfigS(name)
-#endif
 
 	// Unfortunately, because code in the GS still reads the setting by key instead of
 	// using these variables, we need to use the old names. Maybe post 2.0 we can change this.
@@ -623,10 +658,21 @@ void Pcsx2Config::GSOptions::ReloadIniSettings()
 	GSSettingInt(ShadeBoost_Brightness);
 	GSSettingInt(ShadeBoost_Contrast);
 	GSSettingInt(ShadeBoost_Saturation);
+	GSSettingIntEx(PNGCompressionLevel, "png_compression_level");
 	GSSettingIntEx(SaveN, "saven");
 	GSSettingIntEx(SaveL, "savel");
 
+	GSSettingStringEx(VideoCaptureContainer, "VideoCaptureContainer");
+	GSSettingStringEx(VideoCaptureCodec, "VideoCaptureCodec");
+	GSSettingIntEx(VideoCaptureBitrate, "VideoCaptureBitrate");
+
 	GSSettingString(Adapter);
+	GSSettingString(HWDumpDirectory);
+	if (!HWDumpDirectory.empty() && !Path::IsAbsolute(HWDumpDirectory))
+		HWDumpDirectory = Path::Combine(EmuFolders::DataRoot, HWDumpDirectory);
+	GSSettingString(SWDumpDirectory);
+	if (!SWDumpDirectory.empty() && !Path::IsAbsolute(SWDumpDirectory))
+		SWDumpDirectory = Path::Combine(EmuFolders::DataRoot, SWDumpDirectory);
 
 #undef GSSettingInt
 #undef GSSettingIntEx
@@ -637,6 +683,14 @@ void Pcsx2Config::GSOptions::ReloadIniSettings()
 #undef GSSettingIntEnumEx
 #undef GSSettingString
 #undef GSSettingStringEx
+
+	// Sanity check: don't dump a bunch of crap in the current working directory.
+	const std::string& dump_dir = UseHardwareRenderer() ? HWDumpDirectory : SWDumpDirectory;
+	if (DumpGSData && dump_dir.empty())
+	{
+		Console.Error("Draw dumping is enabled but directory is unconfigured, please set one.");
+		DumpGSData = false;
+	}
 }
 
 void Pcsx2Config::GSOptions::MaskUserHacks()
@@ -784,7 +838,6 @@ void Pcsx2Config::DEV9Options::LoadSave(SettingsWrapper& wrap)
 		SettingsWrapEnumEx(ModeDNS2, "ModeDNS2", DnsModeNames);
 	}
 
-#ifdef PCSX2_CORE
 	if (wrap.IsLoading())
 		EthHosts.clear();
 
@@ -823,7 +876,6 @@ void Pcsx2Config::DEV9Options::LoadSave(SettingsWrapper& wrap)
 				Console.WriteLn("DEV9: Host entry %i: url %s mapped to %s", i, entry.Url.c_str(), addrStr.c_str());
 		}
 	}
-#endif
 
 	{
 		SettingsWrapSection("DEV9/Hdd");
@@ -1021,6 +1073,61 @@ void Pcsx2Config::FramerateOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapEntry(SlomoScalar);
 }
 
+Pcsx2Config::USBOptions::USBOptions()
+{
+	for (u32 i = 0; i < static_cast<u32>(Ports.size()); i++)
+	{
+		Ports[i].DeviceType = -1;
+		Ports[i].DeviceSubtype = 0;
+	}
+}
+
+void Pcsx2Config::USBOptions::LoadSave(SettingsWrapper& wrap)
+{
+	for (u32 i = 0; i < static_cast<u32>(Ports.size()); i++)
+	{
+		const std::string section(USB::GetConfigSection(i));
+
+		std::string device = USB::DeviceTypeIndexToName(Ports[i].DeviceType);
+		wrap.Entry(section.c_str(), "Type", device, device);
+
+		if (wrap.IsLoading())
+			Ports[i].DeviceType = USB::DeviceTypeNameToIndex(device);
+
+		if (Ports[i].DeviceType >= 0)
+		{
+			const std::string subtype_key(fmt::format("{}_subtype", USB::DeviceTypeIndexToName(Ports[i].DeviceType)));
+			wrap.Entry(section.c_str(), subtype_key.c_str(), Ports[i].DeviceSubtype);
+		}
+	}
+}
+
+bool Pcsx2Config::USBOptions::Port::operator==(const USBOptions::Port& right) const
+{
+	return OpEqu(DeviceType) && OpEqu(DeviceSubtype);
+}
+
+bool Pcsx2Config::USBOptions::Port::operator!=(const USBOptions::Port& right) const
+{
+	return !this->operator==(right);
+}
+
+bool Pcsx2Config::USBOptions::operator==(const USBOptions& right) const
+{
+	for (u32 i = 0; i < static_cast<u32>(Ports.size()); i++)
+	{
+		if (!OpEqu(Ports[i]))
+			return false;
+	}
+
+	return true;
+}
+
+bool Pcsx2Config::USBOptions::operator!=(const USBOptions& right) const
+{
+	return !this->operator==(right);
+}
+
 #ifdef ENABLE_ACHIEVEMENTS
 
 Pcsx2Config::AchievementsOptions::AchievementsOptions()
@@ -1061,14 +1168,12 @@ Pcsx2Config::Pcsx2Config()
 	McdFolderAutoManage = true;
 	EnablePatches = true;
 	EnableRecordingTools = true;
-#ifdef PCSX2_CORE
 	EnableGameFixes = true;
 	InhibitScreensaver = true;
-#endif
 	BackupSavestate = true;
 	SavestateZstdCompression = true;
 
-#ifdef __WXMSW__
+#ifdef _WIN32
 	McdCompressNTFS = true;
 #endif
 
@@ -1105,12 +1210,10 @@ void Pcsx2Config::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBool(EnableWideScreenPatches);
 	SettingsWrapBitBool(EnableNoInterlacingPatches);
 	SettingsWrapBitBool(EnableRecordingTools);
-#ifdef PCSX2_CORE
 	SettingsWrapBitBool(EnableGameFixes);
 	SettingsWrapBitBool(SaveStateOnShutdown);
 	SettingsWrapBitBool(EnableDiscordPresence);
 	SettingsWrapBitBool(InhibitScreensaver);
-#endif
 	SettingsWrapBitBool(ConsoleToStdio);
 	SettingsWrapBitBool(HostFs);
 
@@ -1118,11 +1221,6 @@ void Pcsx2Config::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBool(SavestateZstdCompression);
 	SettingsWrapBitBool(McdEnableEjection);
 	SettingsWrapBitBool(McdFolderAutoManage);
-#ifndef PCSX2_CORE
-	// We put mtap in the Pad section for Qt to make it easier to manually edit input profiles.
-	SettingsWrapBitBool(MultitapPort0_Enabled);
-	SettingsWrapBitBool(MultitapPort1_Enabled);
-#endif
 
 	SettingsWrapBitBool(WarnAboutUnsafeSettings);
 
@@ -1131,16 +1229,14 @@ void Pcsx2Config::LoadSave(SettingsWrapper& wrap)
 	Speedhacks.LoadSave(wrap);
 	Cpu.LoadSave(wrap);
 	GS.LoadSave(wrap);
-#ifdef PCSX2_CORE
-	// SPU2 is in a separate ini in wx.
 	SPU2.LoadSave(wrap);
-#endif
 	DEV9.LoadSave(wrap);
 	Gamefixes.LoadSave(wrap);
 	Profiler.LoadSave(wrap);
 
 	Debugger.LoadSave(wrap);
 	Trace.LoadSave(wrap);
+	USB.LoadSave(wrap);
 
 #ifdef ENABLE_ACHIEVEMENTS
 	Achievements.LoadSave(wrap);
@@ -1149,16 +1245,14 @@ void Pcsx2Config::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapEntry(GzipIsoIndexTemplate);
 
 	// For now, this in the derived config for backwards ini compatibility.
-#ifdef PCSX2_CORE
 	SettingsWrapEntryEx(CurrentBlockdump, "BlockDumpSaveDirectory");
 
 	BaseFilenames.LoadSave(wrap);
 	Framerate.LoadSave(wrap);
 	LoadSaveMemcards(wrap);
 
-#ifdef __WXMSW__
+#ifdef _WIN32
 	SettingsWrapEntry(McdCompressNTFS);
-#endif
 #endif
 
 	if (wrap.IsLoading())
@@ -1232,54 +1326,6 @@ bool Pcsx2Config::operator==(const Pcsx2Config& right) const
 	}
 
 	return equal;
-}
-
-void Pcsx2Config::CopyConfig(const Pcsx2Config& cfg)
-{
-	Cpu = cfg.Cpu;
-	GS = cfg.GS;
-	DEV9 = cfg.DEV9;
-	Speedhacks = cfg.Speedhacks;
-	Gamefixes = cfg.Gamefixes;
-	Profiler = cfg.Profiler;
-	Debugger = cfg.Debugger;
-	Trace = cfg.Trace;
-	BaseFilenames = cfg.BaseFilenames;
-	Framerate = cfg.Framerate;
-
-	for (u32 i = 0; i < sizeof(Mcd) / sizeof(Mcd[0]); i++)
-	{
-		// Type will be File here, even if it's a folder, so we preserve the old value.
-		// When the memory card is re-opened, it should redetect anyway.
-		Mcd[i].Enabled = cfg.Mcd[i].Enabled;
-		Mcd[i].Filename = cfg.Mcd[i].Filename;
-	}
-
-	GzipIsoIndexTemplate = cfg.GzipIsoIndexTemplate;
-
-	CdvdVerboseReads = cfg.CdvdVerboseReads;
-	CdvdDumpBlocks = cfg.CdvdDumpBlocks;
-	CdvdShareWrite = cfg.CdvdShareWrite;
-	EnablePatches = cfg.EnablePatches;
-	EnableCheats = cfg.EnableCheats;
-	EnablePINE = cfg.EnablePINE;
-	EnableWideScreenPatches = cfg.EnableWideScreenPatches;
-	EnableNoInterlacingPatches = cfg.EnableNoInterlacingPatches;
-	EnableRecordingTools = cfg.EnableRecordingTools;
-	UseBOOT2Injection = cfg.UseBOOT2Injection;
-	BackupSavestate = cfg.BackupSavestate;
-	SavestateZstdCompression = cfg.SavestateZstdCompression;
-	McdEnableEjection = cfg.McdEnableEjection;
-	McdFolderAutoManage = cfg.McdFolderAutoManage;
-	MultitapPort0_Enabled = cfg.MultitapPort0_Enabled;
-	MultitapPort1_Enabled = cfg.MultitapPort1_Enabled;
-	ConsoleToStdio = cfg.ConsoleToStdio;
-	HostFs = cfg.HostFs;
-#ifdef __WXMSW__
-	McdCompressNTFS = cfg.McdCompressNTFS;
-#endif
-
-	LimiterMode = cfg.LimiterMode;
 }
 
 void Pcsx2Config::CopyRuntimeConfig(Pcsx2Config& cfg)
